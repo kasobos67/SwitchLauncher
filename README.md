@@ -23,11 +23,15 @@ The optional `updates.launcher-packs.view.v1` feature lets Switch UI draw the up
 
 ## Interface
 
-![Switch UI HOME screen with sample software](docs/images/home.png)
+![Switch UI HOME screen](docs/images/1.jpg)
 
-![Switch UI software library with sample software](docs/images/library.png)
+![All Software library](docs/images/2.jpg)
 
-Preview images show sample software for demonstration. Games are not included.
+![Profile icon selection](docs/images/3.jpg)
+
+![Performance settings](docs/images/4.jpg)
+
+Screenshots supplied by the project author. Games shown are not included.
 
 - Switch-inspired HOME screen, library navigation and title bubbles.
 - Profile selection and profile artwork.
