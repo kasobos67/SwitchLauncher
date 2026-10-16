@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "background": 0,
+  "atlas": "assets/loading-atlas.tga",
+  "layers": [
+    {
+      "kind": "border",
+      "rect": [
+        96,
+        66,
+        168,
+        46
+      ],
+      "radius": 23,
+      "width": 3
+    },
+    {
+      "kind": "image",
+      "rect": [
+        112.5,
+        76,
+        135,
+        26
+      ],
+      "uv": [
+        0.00390625,
+        0.03125,
+        0.263671875,
+        0.203125
+      ]
+    },
+    {
+      "kind": "image",
+      "rect": [
+        -142,
+        -140,
+        24,
+        50
+      ],
+      "uv": [
+        0.3125,
+        0.03125,
+        0.046875,
+        0.390625
+      ],
+      "period": 1.8,
+      "fade_in": 0.12,
+      "fade_out_start": 1.3,
+      "fade_out_end": 1.7
+    },
+    {
+      "kind": "image",
+      "rect": [
+        -112,
+        -140,
+        21,
+        50
+      ],
+      "uv": [
+        0.375,
+        0.03125,
+        0.041015625,
+        0.390625
+      ],
+      "period": 1.8,
+      "y_from": -14,
+      "y_to": 0,
+      "move_start": 0.18,
+      "move_end": 0.46,
+      "fade_in": 0.12,
+      "fade_out_start": 1.3,
+      "fade_out_end": 1.7
+    }
+  ]
+}

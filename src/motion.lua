@@ -1,0 +1,123 @@
+-- Switch presentation animation tracks. Kept outside the host app.
+local motion={}
+local tracks={}
+tracks.k_decide_scale={{0.0,1.0,-0.04645446688},{2.0,0.9399999976,0.0},{4.0,1.0,0.01482140459},{6.0,1.00999999,-0.002553308383},{8.0,1.0,0.0}}
+tracks.k_decide_flash={{0.0,0.0,32.0},{1.0,32.0,0.0},{4.0,32.0,0.0},{4.0,32.0,0.0},{8.0,0.0,0.0}}
+tracks.k_modal_scale={{0.0,0.9800000191,0.002499997616},{8.0,1.0,0.0}}
+tracks.k_screen_in={{0.0,0.0,56.23152161},{8.0,255.0,0.0}}
+tracks.k_screen_out={{-24.0,255.0,0.0},{4.0,255.0,0.0},{4.0,255.0,-50.79533005},{12.0,0.0,0.0}}
+tracks.k_home_focus_alpha={{0.0,0.0,0.0},{1.0,0.0,0.0},{1.0,255.0,0.0}}
+tracks.k_home_focus_base={{0.0,0.0,0.0},{1.0,0.0,0.0},{1.0,100.0,0.0}}
+tracks.k_home_unfocus_alpha={{0.0,255.0,-85.0},{3.0,0.0,0.0}}
+tracks.k_home_unfocus_base={{0.0,100.0,-33.33333206},{3.0,0.0,0.0}}
+tracks.k_launch_effect_scale={{0.0,1.0,0.1992214024},{5.0,1.414507508,0.007083438337},{30.0,1.5,0.0}}
+tracks.k_launch_effect_alpha={{0.0,60.0,0.0},{30.0,0.0,0.0}}
+tracks.k_home_entry_scale={{20.0,0.9700000286,0.0},{20.0,0.9700000286,0.0},{20.0,0.9700000286,0.003528145375},{27.0,0.9860025048,0.00188813149},{50.0,1.0,0.0}}
+tracks.k_home_entry_alpha={{20.0,0.0,0.0},{40.0,255.0,0.0}}
+tracks.k_home_starter_scale={{60.0,0.9700000286,0.0},{60.0,0.9700000286,0.0},{60.0,0.9700000286,0.003528145375},{67.0,0.9860025048,0.00188813149},{90.0,1.0,0.0}}
+tracks.k_home_starter_alpha={{60.0,0.0,0.0},{80.0,255.0,0.0}}
+tracks.k_home_game_in_scale={{0.0,1.0,0.02451529354},{3.0,1.043498755,0.004861040972},{12.0,1.059999943,0.0}}
+tracks.k_home_game_in_alpha={{0.0,255.0,0.0},{2.0,255.0,0.0},{2.0,255.0,-156.5748138},{3.0,106.0,-56.90008926},{6.0,22.0,-16.66277504},{8.0,0.0,0.0}}
+tracks.k_home_game_out_scale={{0.0,1.059999943,-0.02025695145},{4.0,1.015128493,-0.004999995232},{12.0,1.0,0.0}}
+tracks.k_home_game_out_alpha={{0.0,0.0,68.05687714},{4.0,178.0,23.9444294},{10.0,249.0,3.780266047},{12.0,255.0,0.0}}
+tracks.k_home_applet_in_scale={{0.0,1.0,0.0},{21.0,1.0,0.0},{21.0,1.0,-0.004142473917},{29.0,0.9800000191,0.0}}
+tracks.k_home_applet_in_alpha={{17.0,255.0,0.0},{21.0,211.0,-25.5},{27.0,0.0,0.0}}
+tracks.k_home_applet_out_scale={{0.0,0.9800000191,0.002792165382},{20.0,1.0,0.0},{80.0,1.0,0.0},{80.0,1.059999943,0.0}}
+tracks.k_home_applet_out_alpha={{0.0,0.0,0.0},{20.0,255.0,0.0},{80.0,255.0,0.0},{80.0,0.0,0.0}}
+tracks.k_library_decide_flash={{0.0,0.0,32.0},{1.0,32.0,0.0},{4.0,32.0,0.0},{4.0,32.0,0.0},{12.0,0.0,0.0}}
+tracks.k_library_focus_alpha={{0.0,0.0,0.0},{1.0,0.0,0.0},{1.0,255.0,0.0}}
+tracks.k_library_focus_base={{0.0,0.0,0.0},{1.0,0.0,0.0},{1.0,100.0,0.0}}
+tracks.k_library_unfocus_alpha={{0.0,255.0,-85.0},{3.0,0.0,0.0}}
+tracks.k_library_unfocus_base={{0.0,100.0,-33.33333206},{3.0,0.0,0.0}}
+tracks.k_library_focus_shadow={{0.0,0.0,0.25},{1.0,0.25,0.0}}
+tracks.k_library_unfocus_shadow={{-49.0,0.25,0.0},{1.0,0.25,0.0},{1.0,0.0,-0.004999999888}}
+tracks.k_library_header_in={{0.0,0.0,42.5},{6.0,255.0,0.0}}
+tracks.k_library_header_out={{0.0,255.0,-42.5},{6.0,0.0,0.0}}
+tracks.k_library_content_in={{0.0,0.0,112.4587479},{6.0,255.0,0.0}}
+tracks.k_library_content_out={{0.0,255.0,-62.12744904},{6.0,0.0,0.0}}
+tracks.k_modal_alpha={{0.0,0.0,31.875},{8.0,255.0,0.0}}
+tracks.k_modal_mask_alpha={{0.0,0.0,31.875},{8.0,255.0,0.0}}
+tracks.k_modal_shadow={{0.0,0.0,0.07500000298},{8.0,0.6000000238,0.0}}
+tracks.k_modal_out_scale={{12.0,1.0,0.0},{12.0,1.0,0.0},{12.0,1.0,-0.001666665077},{24.0,0.9800000191,0.0}}
+tracks.k_modal_out_alpha={{0.0,255.0,0.0},{12.0,255.0,0.0},{12.0,255.0,-21.25},{24.0,0.0,0.0}}
+tracks.k_modal_out_mask_alpha={{0.0,255.0,0.0},{12.0,255.0,0.0},{12.0,255.0,-21.25},{24.0,0.0,0.0}}
+tracks.k_modal_out_shadow={{0.0,0.6000000238,-0.02500000037},{24.0,0.0,0.0}}
+tracks.k_modal_confirm_scale={{0.0,1.0,0.0},{12.0,1.0,0.0},{12.0,1.0,0.001666665077},{24.0,1.019999981,0.0}}
+tracks.k_modal_confirm_alpha={{0.0,255.0,0.0},{12.0,255.0,0.0},{12.0,255.0,-21.25},{24.0,0.0,0.0}}
+tracks.k_cursor_tl_alpha={{-30.0,25.0,0.0},{30.0,255.0,0.0},{90.0,25.0,0.0},{150.0,95.0,0.0},{210.0,25.0,0.0},{270.0,255.0,0.0},{330.0,25.0,0.0},{390.0,95.0,0.0},{450.0,25.0,0.0},{510.0,255.0,0.0},{570.0,25.0,0.0},{630.0,95.0,0.0},{690.0,25.0,0.0},{750.0,255.0,0.0}}
+tracks.k_cursor_tr_alpha={{-30.0,95.0,0.0},{30.0,25.0,0.0},{90.0,255.0,0.0},{150.0,25.0,0.0},{210.0,95.0,0.0},{270.0,25.0,0.0},{330.0,255.0,0.0},{390.0,25.0,0.0},{450.0,95.0,0.0},{510.0,25.0,0.0},{570.0,255.0,0.0},{630.0,25.0,0.0},{690.0,95.0,0.0},{750.0,25.0,0.0}}
+tracks.k_cursor_bl_alpha={{-30.0,255.0,0.0},{30.0,25.0,0.0},{90.0,95.0,0.0},{150.0,25.0,0.0},{210.0,255.0,0.0},{270.0,25.0,0.0},{330.0,95.0,0.0},{390.0,25.0,0.0},{450.0,255.0,0.0},{510.0,25.0,0.0},{570.0,95.0,0.0},{630.0,25.0,0.0},{690.0,255.0,0.0},{750.0,25.0,0.0}}
+tracks.k_cursor_br_alpha={{-30.0,25.0,0.0},{30.0,95.0,0.0},{90.0,25.0,0.0},{150.0,255.0,0.0},{210.0,25.0,0.0},{270.0,95.0,0.0},{330.0,25.0,0.0},{390.0,255.0,0.0},{450.0,25.0,0.0},{510.0,95.0,0.0},{570.0,25.0,0.0},{630.0,255.0,0.0},{690.0,25.0,0.0},{750.0,95.0,0.0}}
+tracks.k_cursor_main_rotation={{0.0,-90.0,-1.0},{720.0,-810.0,-1.0}}
+tracks.k_cursor_glow_rotation={{0.0,-90.0,1.125},{720.0,720.0,1.125}}
+tracks.k_cursor_main_effect={{-10.0,0.0,0.0},{10.0,1.0,0.0},{12.0,1.0,0.0},{47.0,0.0,0.0},{50.0,0.0,0.0},{70.0,1.0,0.0},{72.0,1.0,0.0},{107.0,0.0,0.0},{110.0,0.0,0.0},{130.0,1.0,0.0},{132.0,1.0,0.0},{167.0,0.0,0.0},{170.0,0.0,0.0},{190.0,1.0,0.0},{192.0,1.0,0.0},{227.0,0.0,0.0},{230.0,0.0,0.0},{250.0,1.0,0.0},{252.0,1.0,0.0},{287.0,0.0,0.0},{290.0,0.0,0.0},{310.0,1.0,0.0},{312.0,1.0,0.0},{347.0,0.0,0.0},{350.0,0.0,0.0},{370.0,1.0,0.0},{372.0,1.0,0.0},{407.0,0.0,0.0},{410.0,0.0,0.0},{430.0,1.0,0.0},{432.0,1.0,0.0},{467.0,0.0,0.0},{470.0,0.0,0.0},{490.0,1.0,0.0},{492.0,1.0,0.0},{527.0,0.0,0.0},{530.0,0.0,0.0},{550.0,1.0,0.0},{552.0,1.0,0.0},{587.0,0.0,0.0},{590.0,0.0,0.0},{610.0,1.0,0.0},{612.0,1.0,0.0},{647.0,0.0,0.0},{650.0,0.0,0.0},{670.0,1.0,0.0},{672.0,1.0,0.0},{707.0,0.0,0.0},{710.0,0.0,0.0},{730.0,1.0,0.0}}
+tracks.k_cursor_glow_effect={{-10.0,0.0,0.0},{9.0,0.8000000119,0.0},{10.0,0.8000000119,0.0},{44.0,0.0,0.0},{50.0,0.0,0.0},{69.0,0.8000000119,0.0},{70.0,0.8000000119,0.0},{104.0,0.0,0.0},{110.0,0.0,0.0},{129.0,0.8000000119,0.0},{130.0,0.8000000119,0.0},{164.0,0.0,0.0},{170.0,0.0,0.0},{189.0,0.8000000119,0.0},{190.0,0.8000000119,0.0},{224.0,0.0,0.0},{230.0,0.0,0.0},{249.0,0.8000000119,0.0},{250.0,0.8000000119,0.0},{284.0,0.0,0.0},{290.0,0.0,0.0},{309.0,0.8000000119,0.0},{310.0,0.8000000119,0.0},{344.0,0.0,0.0},{350.0,0.0,0.0},{369.0,0.8000000119,0.0},{370.0,0.8000000119,0.0},{404.0,0.0,0.0},{410.0,0.0,0.0},{429.0,0.8000000119,0.0},{430.0,0.8000000119,0.0},{464.0,0.0,0.0},{470.0,0.0,0.0},{489.0,0.8000000119,0.0},{490.0,0.8000000119,0.0},{524.0,0.0,0.0},{530.0,0.0,0.0},{549.0,0.8000000119,0.0},{550.0,0.8000000119,0.0},{584.0,0.0,0.0},{590.0,0.0,0.0},{609.0,0.8000000119,0.0},{610.0,0.8000000119,0.0},{644.0,0.0,0.0},{650.0,0.0,0.0},{669.0,0.8000000119,0.0},{670.0,0.8000000119,0.0},{704.0,0.0,0.0},{710.0,0.0,0.0},{729.0,0.8000000119,0.0}}
+tracks.k_wait_rotation={{0.0,-2.0,-6.0},{60.0,-362.0,-6.0}}
+local sample_frames,sample_values={},{}
+local function sample(keys,frame)
+    if sample_frames[keys]==frame then return sample_values[keys] end
+    if frame<keys[1][1] then return keys[1][2] end
+    if frame>=keys[#keys][1] then return keys[#keys][2] end
+    local next,last=1,#keys
+    while next<last do
+        local middle=(next+last)//2
+        if keys[middle][1]<=frame then next=middle+1 else last=middle end
+    end
+    local a,b=keys[next-1],keys[next];local span=b[1]-a[1];local t=math.max(0,math.min(1,(frame-a[1])/span));local t2,t3=t*t,t*t*t
+    local value=(2*t3-3*t2+1)*a[2]+(t3-2*t2+t)*span*a[3]+(-2*t3+3*t2)*b[2]+(t3-t2)*span*b[3]
+    sample_frames[keys]=frame;sample_values[keys]=value
+    return value
+end
+motion.decide_scale=function(frame) return sample(tracks.k_decide_scale,frame) end
+motion.decide_flash=function(frame) return sample(tracks.k_decide_flash,frame) end
+motion.modal_scale=function(frame) return sample(tracks.k_modal_scale,frame) end
+motion.screen_in=function(frame) return sample(tracks.k_screen_in,frame) end
+motion.screen_out=function(frame) return sample(tracks.k_screen_out,frame) end
+motion.home_focus_alpha=function(frame) return sample(tracks.k_home_focus_alpha,frame) end
+motion.home_focus_base=function(frame) return sample(tracks.k_home_focus_base,frame) end
+motion.home_unfocus_alpha=function(frame) return sample(tracks.k_home_unfocus_alpha,frame) end
+motion.home_unfocus_base=function(frame) return sample(tracks.k_home_unfocus_base,frame) end
+motion.launch_effect_scale=function(frame) return sample(tracks.k_launch_effect_scale,frame) end
+motion.launch_effect_alpha=function(frame) return sample(tracks.k_launch_effect_alpha,frame) end
+motion.home_entry_scale=function(frame) return sample(tracks.k_home_entry_scale,frame) end
+motion.home_entry_alpha=function(frame) return sample(tracks.k_home_entry_alpha,frame) end
+motion.home_starter_scale=function(frame) return sample(tracks.k_home_starter_scale,frame) end
+motion.home_starter_alpha=function(frame) return sample(tracks.k_home_starter_alpha,frame) end
+motion.home_game_in_scale=function(frame) return sample(tracks.k_home_game_in_scale,frame) end
+motion.home_game_in_alpha=function(frame) return sample(tracks.k_home_game_in_alpha,frame) end
+motion.home_game_out_scale=function(frame) return sample(tracks.k_home_game_out_scale,frame) end
+motion.home_game_out_alpha=function(frame) return sample(tracks.k_home_game_out_alpha,frame) end
+motion.home_applet_in_scale=function(frame) return sample(tracks.k_home_applet_in_scale,frame) end
+motion.home_applet_in_alpha=function(frame) return sample(tracks.k_home_applet_in_alpha,frame) end
+motion.home_applet_out_scale=function(frame) return sample(tracks.k_home_applet_out_scale,frame) end
+motion.home_applet_out_alpha=function(frame) return sample(tracks.k_home_applet_out_alpha,frame) end
+motion.library_decide_flash=function(frame) return sample(tracks.k_library_decide_flash,frame) end
+motion.library_focus_alpha=function(frame) return sample(tracks.k_library_focus_alpha,frame) end
+motion.library_focus_base=function(frame) return sample(tracks.k_library_focus_base,frame) end
+motion.library_unfocus_alpha=function(frame) return sample(tracks.k_library_unfocus_alpha,frame) end
+motion.library_unfocus_base=function(frame) return sample(tracks.k_library_unfocus_base,frame) end
+motion.library_focus_shadow=function(frame) return sample(tracks.k_library_focus_shadow,frame) end
+motion.library_unfocus_shadow=function(frame) return sample(tracks.k_library_unfocus_shadow,frame) end
+motion.library_header_in=function(frame) return sample(tracks.k_library_header_in,frame) end
+motion.library_header_out=function(frame) return sample(tracks.k_library_header_out,frame) end
+motion.library_content_in=function(frame) return sample(tracks.k_library_content_in,frame) end
+motion.library_content_out=function(frame) return sample(tracks.k_library_content_out,frame) end
+motion.modal_alpha=function(frame) return sample(tracks.k_modal_alpha,frame) end
+motion.modal_mask_alpha=function(frame) return sample(tracks.k_modal_mask_alpha,frame) end
+motion.modal_shadow=function(frame) return sample(tracks.k_modal_shadow,frame) end
+motion.modal_out_scale=function(frame) return sample(tracks.k_modal_out_scale,frame) end
+motion.modal_out_alpha=function(frame) return sample(tracks.k_modal_out_alpha,frame) end
+motion.modal_out_mask_alpha=function(frame) return sample(tracks.k_modal_out_mask_alpha,frame) end
+motion.modal_out_shadow=function(frame) return sample(tracks.k_modal_out_shadow,frame) end
+motion.modal_confirm_scale=function(frame) return sample(tracks.k_modal_confirm_scale,frame) end
+motion.modal_confirm_alpha=function(frame) return sample(tracks.k_modal_confirm_alpha,frame) end
+motion.cursor_tl_alpha=function(frame) return sample(tracks.k_cursor_tl_alpha,frame) end
+motion.cursor_tr_alpha=function(frame) return sample(tracks.k_cursor_tr_alpha,frame) end
+motion.cursor_bl_alpha=function(frame) return sample(tracks.k_cursor_bl_alpha,frame) end
+motion.cursor_br_alpha=function(frame) return sample(tracks.k_cursor_br_alpha,frame) end
+motion.cursor_main_rotation=function(frame) return sample(tracks.k_cursor_main_rotation,frame) end
+motion.cursor_glow_rotation=function(frame) return sample(tracks.k_cursor_glow_rotation,frame) end
+motion.cursor_main_effect=function(frame) return sample(tracks.k_cursor_main_effect,frame) end
+motion.cursor_glow_effect=function(frame) return sample(tracks.k_cursor_glow_effect,frame) end
+motion.wait_rotation=function(frame) return sample(tracks.k_wait_rotation,frame) end
+local profile_colors={0xffcccc,0xff9999,0xff6969,0xff0000,0xc80a0a,0x6f1010,0xffe3cc,0xffc399,0xffb066,0xff8400,0xc17f3a,0x6e4722,0xffff99,0xffff00,0xffe600,0xffb600,0xbfa645,0x7e6c0f,0xf0ff99,0xe6ff31,0xd3f025,0xc6d600,0xa1b026,0x67730f,0xd4f9c7,0xb4f49c,0x86e66c,0x34d70d,0x4fa31d,0x247519,0xbfefe1,0x91e3ce,0x65e6c3,0x00dba1,0x2eac8b,0x0f7358,0xc0e4f0,0x91dcf2,0x5ed6eb,0x13beed,0x3496c1,0x165e72,0xaed5f7,0x80bdff,0x479bff,0x314fff,0x0051bd,0x1c3d68,0xe4ccff,0xd2a8ff,0xb66bff,0x8c19ff,0x711dbd,0x451278,0xffccf9,0xffa6e4,0xff73d4,0xff19df,0xbf0abc,0x691579,0xf5f5f5,0xd9d9d9,0xb3b3b3,0x808080,0x474b55,0x282828,0xebf0f7,0xc3cad9,0x99a0b3,0x666c80,0x3c4459,0x131d45}

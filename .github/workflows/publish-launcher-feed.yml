@@ -1,0 +1,37 @@
+name: Publish launcher update feed
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag, for example v1.003.009
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out publisher
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Test publisher
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Update stable feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: python3 tools/publish_feed.py --tag "$RELEASE_TAG"
