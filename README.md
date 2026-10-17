@@ -111,53 +111,6 @@ If the interface cannot open, close the app and create an empty file at:
 
 Restart the app to use the built-in interface. Remove that recovery file before selecting an external launcher again. The installed pack and saved launcher state can remain in place.
 
-## Source and releases
-
-This repository contains the launcher and its release tools. ProsperoEden itself remains in the [upstream repository](https://github.com/blackbearreloaded/ProsperoEden).
-
-```text
-src/                  Lua presentation and motion source
-assets/               Artwork, font and sound resources
-manifest.json         Pack identity, version and permanent update address
-loading.json          Loading-screen presentation
-tools/                Local pack builder and release-feed publisher
-tests/                Packaging and publisher tests
-.github/workflows/    Stable-feed publication workflow
-```
-
-One large artwork atlas is stored as `.tga.gz` so the complete source can be uploaded through GitHub's website. The pack builder restores the original TGA bytes; the installed artwork is unchanged. The source archive therefore needs packaging before it can be installed.
-
-### Build an installable ZIP
-
-Python 3.10 or newer is sufficient. No Git command, emulator compilation or extra Python package is required.
-
-```sh
-python tools/build_release.py
-```
-
-This creates `dist/SwitchLauncher-<version>.zip` and its SHA-256 file. The builder combines the Lua source, inserts the manifest version and restores the compressed source atlas. Development tools and screenshots are omitted from the installed pack.
-
-Run the tests with:
-
-```sh
-python -m unittest discover -s tests -v
-```
-
-### Publish a versioned release
-
-1. Update the launcher source and set a new three-part numeric version in `manifest.json`.
-2. Build and test the pack. Keep `id`, `state_schema` and the permanent feed unchanged unless deliberately planning a migration.
-3. Upload the updated repository files through GitHub's website.
-4. Create a release using the matching **`v<version>`** tag, targeting the uploaded source.
-5. Attach **`SwitchLauncher-<version>.zip`** before publishing. Its checksum file can be attached too.
-6. Publish as a stable release, then wait for **Actions → Publish launcher update feed** to finish.
-
-The workflow uses the repository's built-in token with Contents write permission. It creates the `update-feed` branch on first publication. The first feed becomes available after that run; no manually uploaded feed asset is needed.
-
-Do not replace a published version's ZIP. Publish a new version instead. If publication needs retrying, use **Actions → Publish launcher update feed → Run workflow**, enter the existing tag and run it from the default branch. The publisher rejects changed archives for an existing version.
-
-Keep this repository public and retain the feed branch. Repository rules must allow the workflow to update it. This release sets `MIN_APP` to `1.004.000` in `tools/publish_feed.py`; the feed keeps earlier compatible entries for older hosts. Before publishing a later pack that needs a newer host, update that minimum and the manifest's API/capability requirements as appropriate.
-
 ## Credits and licensing
 
 - **Eden developers and contributors:** emulation core.
