@@ -1,13 +1,14 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- External presentation. All emulation and persistent application operations use the host API.
 local PACK_VERSION = "@PACK_VERSION@"
+local PACK_NAME = "Switch UI"
 local LAUNCHER_UPDATES = true
 local HOME_SLOTS = 12
 local face_buttons={"cross","circle","square","triangle"}
 local face_indices={cross=1,circle=2,square=3,triangle=4}
 local face_labels={"Cross","Circle","Square","Triangle"}
 local S = {screen="home",previous="home",transition=100,focus=1,zone="games",profile=1,
-    library=1,scroll=0,scroll_target=0,strip=0,strip_target=0,elapsed=100,time=0,
+    library=1,scroll=0,scroll_target=0,scroll_velocity=0,strip=0,strip_target=0,strip_velocity=0,elapsed=100,time=0,
     category=1,content=false,row=1,menu_scroll=0,modal=nil,modal_time=0,save="",
     games={},tiles={},profiles={},prefs={},choices={},status={},state={},message="",poll=0}
 local U={row=1,status={},busy=false,can_update=true,view=false,credits=false,has_update=false,check_pending=true,next_poll=0}
@@ -42,6 +43,11 @@ local function A(name,p)
     if name~="sound" and name~="state.save" then query_cache={};rows_cache={};layout_cache={} end
     if name=="library.refresh" or name=="game.delete" or name=="profile.choose" or name=="download.start" then S.library_dirty=true end
     local r=host.action(name,p or empty_args)
+    if r and r.ok then
+        if name:sub(1,8)=="profile." then S.identity_dirty=true
+        elseif name=="preferences.set" then S.preferences_dirty=true
+        elseif name=="game.delete" then S.home_dirty=true end
+    end
     if r and r.ok==false then
         local reason=r.error or r.message
         S.message=type(reason)=="string" and reason~="" and reason or "Could not complete this operation. Please try again."
@@ -175,6 +181,17 @@ end
 local text_args,box_args,line_args,image_args,circle_args,ring_args={},{},{},{},{},{}
 local full_uv={0,0,1,1}
 local home_blank_uv={{0,0,0.5,1},{0.5,0,0.5,1}}
+local profile_uv,cursor_uv={},{}
+for icon=0,146 do profile_uv[icon+1]={(icon%8)/8,math.floor(icon/8)/19,1/8,1/19} end
+for frame=0,71 do cursor_uv[frame+1]={(1060+frame%12*80)/2048,(364+math.floor(frame/12)*80)/1024,76/2048,76/1024} end
+local grid_uv={0,0,64/384,63/128}
+local face_uv={192/384,64/128,32/384,32/128}
+local dpad_uv={dpad={0,64/128,32/384,32/128},updown={32/384,64/128,32/384,32/128},leftright={64/384,64/128,32/384,32/128}}
+local signal_uv={{1282/2048,136/1024,32/2048,32/1024},{1318/2048,136/1024,32/2048,32/1024},{1354/2048,136/1024,32/2048,32/1024}}
+local bubble_uv={{258/2048,136/1024,12/2048,40/1024},{270/2048,136/1024,-12/2048,40/1024},{2/2048,136/1024,11/2048,13/1024},{13/2048,136/1024,-11/2048,13/1024}}
+local home_shortcuts={"About","Game files","Multiplayer","Controllers","System Settings","Screen off"}
+local shortcut_inks={0xff4d4d,0xffae2e,0x4a9bdb}
+local home_hints={{"triangle","Game settings"},{"cross","Select"}}
 local function text(value,x,y,size,ink,align,width)
     size=size or 30
     local drawn=S.prefs.large_text and size<30 and math.min(30,size*1.3) or size
@@ -234,6 +251,17 @@ local function untransform() D("untransform") end
 local function shadow_alpha(a) return (a or .4)*(S.state.white and .3 or 1) end
 local function shadow(x,y,w,h,r,soft,a,ink) local p=shadow_args;p.x=x;p.y=y;p.w=w;p.h=h;p.radius=r or 0;p.softness=soft or 7.5;p.color=ink or 0;p.alpha=shadow_alpha(a);D("shadow",p) end
 local function curve(name,frame) return motion[name] and motion[name](frame) or 1 end
+local focus_border_args={color=0,alpha=0,border=7.5}
+local focus_gradient_args={radius=1.5,color=0xffffff,other=0xffffff}
+local function focus_shadow_clip(x,y,w,h,bx,by,bw,bh,radius,alpha)
+    clip(x,y,w,h);shadow(bx,by+4.5,bw,bh,radius,6,alpha,0x15516e);unclip()
+end
+local function focus_gradient(x,y,w,h,a,b,axis,amount)
+    local p=focus_gradient_args;p.x=x;p.y=y;p.w=w;p.h=h;p.alpha=a/255*amount*.42;p.other_alpha=b/255*amount*.42;p.axis=axis;D("gradient",p)
+end
+local function focus_image_clip(x,y,w,h,bx,by,bw,bh,uv,alpha)
+    clip(x,y,w,h);image("ui",bx,by,bw,bh,uv,0xffffff,alpha);unclip()
+end
 local function focus(x,y,w,h,circular,amount)
     amount=amount or 1; local bx,by,bw,bh=x-7.5,y-7.5,w+15,h+15
     local radius=circular and bw*.5 or 3
@@ -241,21 +269,26 @@ local function focus(x,y,w,h,circular,amount)
     -- Circular focus is drawn behind its icon, so its shadow stays circular.
     if circular then shadow(bx,by+4.5,bw,bh,radius,6,glow_alpha,0x15516e)
     else
-        local clips={{bx-18,by-18,bw+36,y-by+18},{bx-18,y+h,bw+36,by+bh+18-y-h},
-                     {bx-18,y,x-bx+18,h},{x+w,y,bx+bw+18-x-w,h}}
-        for _,r in ipairs(clips) do clip(r[1],r[2],r[3],r[4]);shadow(bx,by+4.5,bw,bh,radius,6,glow_alpha,0x15516e);unclip() end
+        focus_shadow_clip(bx-18,by-18,bw+36,y-by+18,bx,by,bw,bh,radius,glow_alpha)
+        focus_shadow_clip(bx-18,y+h,bw+36,by+bh+18-y-h,bx,by,bw,bh,radius,glow_alpha)
+        focus_shadow_clip(bx-18,y,x-bx+18,h,bx,by,bw,bh,radius,glow_alpha)
+        focus_shadow_clip(x+w,y,bx+bw+18-x-w,h,bx,by,bw,bh,radius,glow_alpha)
     end
-    D("border",{x=bx,y=by,w=bw,h=bh,radius=radius,color=0,alpha=0,border=7.5,edge=S.prefs.high_contrast and C.title or C.accent,edge_alpha=amount})
+    local p=focus_border_args;p.x=bx;p.y=by;p.w=bw;p.h=bh;p.radius=radius;p.edge=S.prefs.high_contrast and C.title or C.accent;p.edge_alpha=amount;D("border",p)
     if not circular then
         local glow_frame=S.prefs.reduce_motion and 0 or S.time*60
-        local alphas={curve("cursor_tl_alpha",glow_frame),curve("cursor_tr_alpha",glow_frame),curve("cursor_bl_alpha",glow_frame),curve("cursor_br_alpha",glow_frame)}
-        local edgespec={{bx,by,bw,7.5,1,2,"horizontal"},{bx,by+bh-7.5,bw,7.5,3,4,"horizontal"},{bx,by,7.5,bh,1,3,"vertical"},{bx+bw-7.5,by,7.5,bh,2,4,"vertical"}}
-        for _,e in ipairs(edgespec) do D("gradient",{x=e[1],y=e[2],w=e[3],h=e[4],radius=1.5,color=0xffffff,other=0xffffff,alpha=alphas[e[5]]/255*amount*.42,other_alpha=alphas[e[6]]/255*amount*.42,axis=e[7]}) end
+        local tl,tr,bl,br=curve("cursor_tl_alpha",glow_frame),curve("cursor_tr_alpha",glow_frame),curve("cursor_bl_alpha",glow_frame),curve("cursor_br_alpha",glow_frame)
+        focus_gradient(bx,by,bw,7.5,tl,tr,"horizontal",amount)
+        focus_gradient(bx,by+bh-7.5,bw,7.5,bl,br,"horizontal",amount)
+        focus_gradient(bx,by,7.5,bh,tl,bl,"vertical",amount)
+        focus_gradient(bx+bw-7.5,by,7.5,bh,tr,br,"vertical",amount)
         local frame=math.floor((S.prefs.reduce_motion and 0 or S.time)*6)%72
-        local uv={(1060+frame%12*80)/2048,(364+math.floor(frame/12)*80)/1024,76/2048,76/1024}
-        local edges={{bx,by,bw,7.5},{bx,by+bh-7.5,bw,7.5},{bx,by+7.5,7.5,bh-15},{bx+bw-7.5,by+7.5,7.5,bh-15}}
+        local uv=cursor_uv[frame+1]
         local main_alpha=amount*.55*curve("cursor_main_effect",S.time*60)
-        for _,r in ipairs(edges) do clip(r[1],r[2],r[3],r[4]); image("ui",bx,by,bw,bh,uv,0xffffff,main_alpha); unclip() end
+        focus_image_clip(bx,by,bw,7.5,bx,by,bw,bh,uv,main_alpha)
+        focus_image_clip(bx,by+bh-7.5,bw,7.5,bx,by,bw,bh,uv,main_alpha)
+        focus_image_clip(bx,by+7.5,7.5,bh-15,bx,by,bw,bh,uv,main_alpha)
+        focus_image_clip(bx+bw-7.5,by+7.5,7.5,bh-15,bx,by,bw,bh,uv,main_alpha)
     end
 end
 local icon_uv={}
@@ -266,21 +299,20 @@ local function symbol(i,x,y,size,ink)
         image(U.has_update and "about_update" or "about",x-drawn*.5,y-drawn*.5,drawn,drawn,nil,ink or C.text)
     else image("ui",x-size*.5,y-size*.5,size,size,icon_uv[i],ink or C.text) end
 end
-local function grid_icon(x,y,size) image("icons",x-size*.5,y-size*.5,size,size,{0,0,64/384,63/128},C.title) end
+local function grid_icon(x,y,size) image("icons",x-size*.5,y-size*.5,size,size,grid_uv,C.title) end
 local function pad(key,x,y,size)
     local action=face_indices[key]
     if action then key=face_buttons[((S.prefs.menu_bind or {})[action] or action-1)+1] end
     size=size or 36; local half=size*.5; local cx=x+half
     if key=="updown" or key=="leftright" or key=="dpad" then
-        local u=key=="dpad" and 0 or key=="updown" and 32 or 64
-        image("icons",x,y-half,size,size,{u/384,64/128,32/384,32/128},C.text); return size
+        image("icons",x,y-half,size,size,dpad_uv[key],C.text); return size
     end
     if key=="l1" or key=="r1" then
         D("border",{x=x,y=y-half,w=size*1.45,h=size,radius=5,color=0,alpha=0,border=1.5,edge=C.text,edge_alpha=.4})
         text(string.upper(key),x+size*.725,y+size*.24,size*.52,C.text,"center"); return size*1.45
     end
     if key=="options" then ring(cx,y,half-.5,1.6,C.text);for j=-1,1 do line(cx-size*.2,y+j*size*.14,cx+size*.2,y+j*size*.14,C.text,size*.085) end;return size end
-    image("icons",x,y-half,size,size,{192/384,64/128,32/384,32/128},C.text)
+    image("icons",x,y-half,size,size,face_uv,C.text)
     local ink=C.base; local stroke=size*.085
     if key=="cross" then local d=size*.17; line(cx-d,y-d,cx+d,y+d,ink,stroke); line(cx-d,y+d,cx+d,y-d,ink,stroke)
     elseif key=="circle" then ring(cx,y,size*.21,stroke,ink)
@@ -348,15 +380,32 @@ local function recover_avatar_aliases()
     end
     return changed
 end
+local avatar_args={asset="profiles",color=0xffffff}
 local function avatar(profile,x,y,size,circular)
     local saved=avatar_settings(profile);local icon=saved.icon
     local rgb=profile_colors[(saved.color or 0)+1] or 0xffcccc
     if circular then circle(x+size*.5,y+size*.5,size*.5,rgb) else box(x,y,size,size,rgb) end
-    D("image",{asset="profiles",x=x,y=y,w=size,h=size,uv={(icon%8)/8,math.floor(icon/8)/19,1/8,1/19},color=0xffffff,radius=circular and size*.5 or 0})
+    local p=avatar_args;p.x=x;p.y=y;p.w=size;p.h=size;p.uv=profile_uv[icon+1];p.radius=circular and size*.5 or 0;D("image",p)
 end
-local function refresh_models()
-    S.prefs=Q("preferences"); S.profiles=Q("profiles"); S.status=Q("status"); S.home=Q("home"); S.choices=Q("choices")
-    rows_cache={};layout_cache={}
+local function apply_palette()
+    if S.state.white then C.base=0xebebeb; C.text=0x252525; C.title=0x252525; C.copy=0x646464; C.meta=0x646464; C.row=0xffffff; C.line=0xc7c7c7; C.shortcut=0xffffff
+    else C.base=0x2d2d2d; C.text=0xf5f5f5; C.title=0xffffff; C.copy=0xcfcfcf; C.meta=0xbdbdbd; C.row=0x414141; C.line=0x555555; C.shortcut=0x505050 end
+end
+local function refresh_models(live_only)
+    -- home() scans game metadata, add-ons and artwork on the rendering thread.
+    -- Like the native launcher, retain that snapshot until an operation changes it.
+    if not live_only or S.identity_dirty then
+        S.prefs=Q("preferences");S.profiles=Q("profiles");S.home=Q("home");S.choices=Q("choices")
+        S.identity_dirty=nil;S.preferences_dirty=nil;S.home_dirty=nil
+        rows_cache={};layout_cache={};apply_palette()
+    elseif S.preferences_dirty then
+        S.prefs=Q("preferences");S.choices=Q("choices");S.preferences_dirty=nil
+        rows_cache={};layout_cache={}
+    end
+    -- Clock, controllers, multiplayer, keyboard, app updates and save sync stay live.
+    S.status=Q("status")
+    local moving=math.abs(S.strip-S.strip_target)>.1 or math.abs(S.scroll-S.scroll_target)>.1 or math.abs(S.strip_velocity)>.1 or math.abs(S.scroll_velocity)>.1 or S.transition<1 or S.intro<2 or S.launch_time
+    if S.home_dirty and not moving then S.home=Q("home");S.home_dirty=nil end
     -- Catalog changes and explicit refreshes invalidate the library snapshot.
     if S.time>=(S.next_catalog or 0) then
         local source_generation=Q("sources").generation;S.next_catalog=S.time+2
@@ -365,16 +414,15 @@ local function refresh_models()
             S.source_generation=source_generation;S.library_watch=S.time+3
         end
     end
-    if not S.generation or S.library_dirty or S.scanning or S.download or S.time<(S.library_watch or 0) or S.time>=(S.library_safety or 0) then
+    if not S.generation or S.library_dirty or S.scanning or S.download or (not moving and (S.library_watch or S.time>=(S.library_safety or 0))) then
         local library=Q("library");S.scanning=library.scanning;S.library_dirty=false;S.library_safety=S.time+60
+        if S.library_watch and S.time>=S.library_watch and not S.scanning then S.library_watch=nil end
         if library.generation~=S.generation then
             S.games=library.games; S.generation=library.generation;S.game_lookup={}
             if S.sort then table.sort(S.games,function(a,b)return (S.sort=="file" and a.file or a.name)<(S.sort=="file" and b.file or b.name) end) end
             for _,g in ipairs(S.games) do if not g.remote and not S.game_lookup[g.file] then S.game_lookup[g.file]=g end end
         end
     end
-    if S.state.white then C.base=0xebebeb; C.text=0x252525; C.title=0x252525; C.copy=0x646464; C.meta=0x646464; C.row=0xffffff; C.line=0xc7c7c7; C.shortcut=0xffffff
-    else C.base=0x2d2d2d; C.text=0xf5f5f5; C.title=0xffffff; C.copy=0xcfcfcf; C.meta=0xbdbdbd; C.row=0x414141; C.line=0x555555; C.shortcut=0x505050 end
     local order={tostring(S.generation),S.scanning and "scanning" or "ready",S.sort or "",S.home.last_file or ""}
     for _,file in ipairs(S.state.recent or {}) do order[#order+1]=file end
     order[#order+1]="|"
@@ -404,7 +452,7 @@ local function open(screen,quiet)
     if S.screen==screen then return end
     S.previous=S.screen; S.screen=screen; S.transition=0; S.modal=nil; S.message=""; S.row=1; S.save=""; S.elapsed=0
     if quiet then return end
-    if screen=="library" then S.scroll=0;S.scroll_target=0;S.library=1; A("library.refresh"); sound("library_open")
+    if screen=="library" then S.scroll=0;S.scroll_target=0;S.scroll_velocity=0;S.library=1; A("library.refresh"); sound("library_open")
     elseif screen=="controllers" then sound("controllers_open")
     elseif screen=="profile" then sound("profile_open")
     elseif screen=="files" then sound("open")
@@ -415,9 +463,10 @@ local function open(screen,quiet)
     else sound("open") end
 end
 local function current_game() if S.screen=="library" then return S.games[S.library] end return S.tiles[S.focus] end
+local cover_args={color=0xffffff}
 local function cover(g,x,y,w,h)
     shadow(x,y+1.5,w,h,0,7.5,.4)
-    if g then D("cover",{game=g.handle,x=x,y=y,w=w,h=h,color=0xffffff,fallback=C.row}) else box(x,y,w,h,C.row) end
+    if g then local p=cover_args;p.game=g.handle;p.x=x;p.y=y;p.w=w;p.h=h;p.fallback=C.row;D("cover",p) else box(x,y,w,h,C.row) end
 end
 local function marquee(value,x,y,w,size)
     local width=measured(value,size)
@@ -434,8 +483,8 @@ local function render_home()
         if selected then text(p.name,x+36,178,28,C.accent,"center",240) end
     end
     text(S.status.clock,1814,115.5,30,C.text,"right")
-    local phase=(S.status.room or {}).phase or 0;local ux=phase==2 and 1354 or (phase==1 or phase==3) and 1318 or 1282
-    image("ui",1832,81,48,48,{ux/2048,136/1024,32/2048,32/1024},C.text)
+    local phase=(S.status.room or {}).phase or 0
+    image("ui",1832,81,48,48,signal_uv[phase==2 and 3 or (phase==1 or phase==3) and 2 or 1],C.text)
     local intro=S.intro or 100
     local ga=S.prefs.reduce_motion and 1 or curve(S.first_start and "home_starter_alpha" or "home_entry_alpha",intro*60)/255
     local gs=S.prefs.reduce_motion and 1 or curve(S.first_start and "home_starter_scale" or "home_entry_scale",intro*60)
@@ -469,28 +518,26 @@ local function render_home()
     end
     unclip();untransform();popopacity()
     opacity(ga);transform(gs,960,816)
-    local names={"About","Game files","Multiplayer","Controllers","System Settings","Screen off"}
-    local inks={0xff4d4d,0xffae2e,0x4a9bdb,C.title,C.title,C.title}
     for i=1,6 do local x=555+(i-1)*162;shadow(x-66,751.5,132,132,66,7.5,.35)
-        if S.zone=="shortcuts" and S.focus==i then focus(x-66,750,132,132,true);text(names[i],x,918,24,C.accent,"center",330) end
+        if S.zone=="shortcuts" and S.focus==i then focus(x-66,750,132,132,true);text(home_shortcuts[i],x,918,24,C.accent,"center",330) end
         circle(x,816,66,C.shortcut)
-        symbol(i,x,816,i<=4 and 132 or 96,inks[i])
+        symbol(i,x,816,i<=4 and 132 or 96,shortcut_inks[i] or C.title)
     end
     untransform();popopacity()
     local notice=S.message~="" and S.message or S.state_save_error
     if notice then text(notice,960,720,22,C.warn,"center",1608)
     elseif (S.home.status or "")~="" then text(S.home.status,960,720,22,C.copy,"center",1608) end
-    footer({{"triangle","Game settings"},{"cross","Select"}})
+    footer(home_hints)
 end
 local function bubble(title,x,y,w)
     local center=x+w*.5
     w=math.max(180,math.min(980,measured(title,30)+42));local bx=clamp(center-w*.5,130.5,1786.5-w)
     shadow(bx,y-82.5,w,65,4.5,6,.36)
     -- Two mirrored halves preserve the original tip and its single joined shadow.
-    image("ui",x+115.5,y-25.75,15,27,{258/2048,136/1024,12/2048,40/1024},0xffffff,shadow_alpha(.36))
-    image("ui",x+130.5,y-25.75,15,27,{270/2048,136/1024,-12/2048,40/1024},0xffffff,shadow_alpha(.36))
-    image("ui",x+114,y-22,16.5,19.5,{2/2048,136/1024,11/2048,13/1024},C.shortcut)
-    image("ui",x+130.5,y-22,16.5,19.5,{13/2048,136/1024,-11/2048,13/1024},C.shortcut)
+    image("ui",x+115.5,y-25.75,15,27,bubble_uv[1],0xffffff,shadow_alpha(.36))
+    image("ui",x+130.5,y-25.75,15,27,bubble_uv[2],0xffffff,shadow_alpha(.36))
+    image("ui",x+114,y-22,16.5,19.5,bubble_uv[3],C.shortcut)
+    image("ui",x+130.5,y-22,16.5,19.5,bubble_uv[4],C.shortcut)
     box(bx,y-84,w,65,C.shortcut,1,4.5)
     marquee(title,bx+21,y-41,w-42,30)
 end
@@ -835,7 +882,7 @@ local function render_about()
     local installed=status.installed_version or PACK_VERSION
     local x,w,inset=384,1152,36
     local left,right=x+inset,x+w-inset
-    text("Switch UI",left,264,40,C.title,"left",720)
+    text(PACK_NAME,left,264,40,C.title,"left",720)
     text("v"..installed,right,264,30,C.text,"right",300)
     text("ProsperoEden",left,328,26,C.copy,"left",720)
     text(S.status.version or "v1.004.000",right,328,26,C.copy,"right",300)
@@ -1245,8 +1292,8 @@ local function run_button(row,per_game)
     elseif action=="theme" then show_modal("theme")
     elseif action=="launcher" then show_modal("launchers")
     elseif action=="select_launcher" then A("launcher.select",{id=row.id})
-    elseif action=="theme_black" or action=="theme_white" then S.state.white=action=="theme_white";save_state();refresh_models();if S.modal then close_modal(false) end;sound("toggle")
-    elseif action=="sort_title" or action=="sort_file" then S.sort=action=="sort_file" and "file" or "title";table.sort(S.games,function(a,b)return (S.sort=="file" and a.file or a.name)<(S.sort=="file" and b.file or b.name) end);S.library=1;S.scroll=0;S.scroll_target=0;close_modal("select")
+    elseif action=="theme_black" or action=="theme_white" then S.state.white=action=="theme_white";save_state();apply_palette();if S.modal then close_modal(false) end;sound("toggle")
+    elseif action=="sort_title" or action=="sort_file" then S.sort=action=="sort_file" and "file" or "title";table.sort(S.games,function(a,b)return (S.sort=="file" and a.file or a.name)<(S.sort=="file" and b.file or b.name) end);S.library=1;S.scroll=0;S.scroll_target=0;S.scroll_velocity=0;close_modal("select")
     elseif action=="profile" then S.profile=row.profile;S.profile_return=S.screen=="settings" and "settings" or "home";open("profile");S.row=1
     elseif action=="choose_profile" then local r=A("profile.choose",{handle=S.profiles[row.profile].handle});if r.ok then refresh_models() end
     elseif action=="add_profile" then local r=A("profile.add");refresh_models();sound(r.ok and "toggle" or "error")
@@ -1554,7 +1601,7 @@ local function update(event)
     if U.diagnostic_pending and not U.view then U.diagnostic_pending=false;U.diagnostic_saved=save_state(true) end
     S.intro=(S.intro or 0)+event.dt
     S.time=event.time;S.elapsed=S.elapsed+event.dt;S.transition=S.transition+event.dt;S.modal_time=S.modal_time+event.dt;S.poll=S.poll+event.dt
-    if S.poll>=.25 then S.poll=0;refresh_models()
+    if S.poll>=.25 then S.poll=0;refresh_models(true)
         if LAUNCHER_UPDATES and not U.view and (S.screen=="about" or S.time>=U.next_poll) then
             U.next_poll=S.time+1;poll_launcher_updates()
             local phase=U.status.phase;U.busy=phase=="checking" or phase=="downloading" or phase=="validating" or phase=="ready" or phase=="installing"
@@ -1573,9 +1620,10 @@ local function update(event)
         end
     end
     if S.welcome then S.welcome=false;sound(S.home.launch_failed and "notify" or S.first_start and "welcome" or "resume") end
-    if S.prefs.reduce_motion then S.scroll=S.scroll_target;S.strip=S.strip_target;S.transition=100
-    else local follow=1-math.exp(-18*event.dt);S.scroll=S.scroll+(S.scroll_target-S.scroll)*follow;S.strip=S.strip+(S.strip_target-S.strip)*follow
-        if math.abs(S.scroll-S.scroll_target)<.1 then S.scroll=S.scroll_target end
+    if S.prefs.reduce_motion then S.scroll=S.scroll_target;S.strip=S.strip_target;S.scroll_velocity=0;S.strip_velocity=0;S.transition=100
+    else local decay=math.exp(-24*event.dt)
+        S.scroll,S.scroll_velocity=motion.scroll(S.scroll,S.scroll_velocity,S.scroll_target,event.dt,decay)
+        S.strip,S.strip_velocity=motion.scroll(S.strip,S.strip_velocity,S.strip_target,event.dt,decay)
     end
     local after=S.status.save_sync or {}
     if after.before==false and after.stage==2 and not S.modal and not S.launch_time then show_modal("sync_after") end

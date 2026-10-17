@@ -1,0 +1,35 @@
+name: Build test launcher
+
+on:
+  push:
+    branches: [test-versions]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/test-versions'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out test branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Test publisher and pack builder
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build test pack
+        run: python3 tools/build_release.py --channel test
+
+      - name: Save installable ZIP and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SwitchLauncher-Test
+          path: |
+            dist/SwitchLauncher-Test-*.zip
+            dist/SwitchLauncher-Test-*.zip.sha256
+          if-no-files-found: error

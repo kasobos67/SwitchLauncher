@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Publish verified release metadata to a stable launcher feed branch."""
+"""Publish verified stable or test metadata to its separate launcher feed branch."""
 import argparse
 import base64
 import hashlib
@@ -15,6 +15,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 import zipfile
+
+try:
+    from .channels import config, CHANNELS
+except ImportError:
+    from channels import config, CHANNELS
 
 REPOSITORY = 'kasobos67/SwitchLauncher'
 BRANCH = 'update-feed'
@@ -36,8 +41,22 @@ def version(value):
     return tuple(map(int, value.split('.')))
 
 
-def feed_url(repository=REPOSITORY):
-    return f'https://raw.githubusercontent.com/{repository}/{BRANCH}/launcher-updates.json'
+def feed_url(repository=REPOSITORY, channel='stable'):
+    return f'https://raw.githubusercontent.com/{repository}/{config(channel).feed_branch}/launcher-updates.json'
+
+
+def tag_version(tag, channel='stable'):
+    prefix = config(channel).tag_prefix
+    require(isinstance(tag, str) and tag.startswith(prefix),
+            'Wrong release channel tag; expected ' + prefix + '<version>')
+    value = tag[len(prefix):]
+    version(value)
+    return value
+
+
+def asset_name(value, channel='stable'):
+    version(value)
+    return config(channel).asset_prefix + '-' + value + '.zip'
 
 
 class ApiError(RuntimeError):
@@ -84,10 +103,10 @@ def download(url, destination):
             output.write(chunk)
 
 
-def inspect_archive(path, tag, expected_feed, repository=REPOSITORY):
-    expected_version = tag.removeprefix('v')
-    version(expected_version)
-    require(tag == 'v' + expected_version, 'Use release tags such as v1.003.009')
+def inspect_archive(path, tag, expected_feed, repository=REPOSITORY, channel='stable'):
+    selected = config(channel)
+    expected_version = tag_version(tag, channel)
+    require(expected_feed == feed_url(repository, channel), 'Wrong permanent feed for release channel')
     require(0 < path.stat().st_size <= MAX_ARCHIVE, 'Invalid archive size')
     names = set()
     expanded = 0
@@ -97,7 +116,7 @@ def inspect_archive(path, tag, expected_feed, repository=REPOSITORY):
         for entry in entries:
             name = entry.filename
             parts = PurePosixPath(name).parts
-            require(name.startswith(IDENTIFIER + '/') and not name.startswith('/') and
+            require(name.startswith(selected.id + '/') and not name.startswith('/') and
                     all(part not in ('.', '..', '') for part in name.rstrip('/').split('/')) and
                     len(parts) <= 21 and len(name.encode()) <= 240 and
                     not any(ord(c) < 32 or ord(c) == 127 or c in ':\\' for c in name),
@@ -112,10 +131,10 @@ def inspect_archive(path, tag, expected_feed, repository=REPOSITORY):
             require(entry.file_size <= 64 * 1024**2, 'Resource exceeds 64 MiB')
             expanded += entry.file_size
             require(expanded <= 256 * 1024**2, 'Archive expands beyond 256 MiB')
-        manifest_name = IDENTIFIER + '/manifest.json'
+        manifest_name = selected.id + '/manifest.json'
         require(manifest_name in names and archive.getinfo(manifest_name).file_size <= 64 * 1024, 'Missing or oversized manifest')
         manifest = json.loads(archive.read(manifest_name))
-        require(manifest.get('schema') == 1 and manifest.get('id') == IDENTIFIER, 'Wrong launcher identity')
+        require(manifest.get('schema') == 1 and manifest.get('id') == selected.id, 'Wrong launcher identity')
         require(manifest.get('version') == expected_version, 'Release tag and manifest version differ')
         require(manifest.get('updates', {}).get('feed') == expected_feed, 'Pack has the wrong permanent feed address')
         api = manifest.get('api', {})
@@ -128,7 +147,7 @@ def inspect_archive(path, tag, expected_feed, repository=REPOSITORY):
         require(isinstance(capabilities, list) and all(isinstance(c, str) for c in capabilities), 'Invalid capabilities')
         resources = [manifest['entry'], manifest['font'], *manifest['assets'].values()]
         for resource in resources:
-            require(isinstance(resource, str) and IDENTIFIER + '/' + resource in names, 'Missing required resource')
+            require(isinstance(resource, str) and selected.id + '/' + resource in names, 'Missing required resource')
         require(archive.testzip() is None, 'Archive CRC check failed')
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return {
@@ -137,15 +156,16 @@ def inspect_archive(path, tag, expected_feed, repository=REPOSITORY):
         'api': api,
         'required_capabilities': capabilities,
         'state_schema': state,
-        'url': f'https://github.com/{repository}/releases/download/{quote(tag, safe="")}/{ASSET_PREFIX}-{expected_version}.zip',
+        'url': f'https://github.com/{repository}/releases/download/{quote(tag, safe="")}/{asset_name(expected_version, channel)}',
         'sha256': digest,
         'bytes': path.stat().st_size,
         'min_app': MIN_APP,
     }
 
 
-def merge_feed(previous, release):
-    require(previous.get('schema') == 1 and previous.get('id') == IDENTIFIER, 'Existing feed belongs to another launcher')
+def merge_feed(previous, release, channel='stable'):
+    selected = config(channel)
+    require(previous.get('schema') == 1 and previous.get('id') == selected.id, 'Existing feed belongs to another launcher')
     releases = previous.get('releases')
     require(isinstance(releases, list) and len(releases) <= 64, 'Invalid existing feed')
     indexed = {}
@@ -161,16 +181,17 @@ def merge_feed(previous, release):
             'Published version has changed. Publish a new version instead of replacing its ZIP.')
     indexed[key] = release
     # Preserve the newest 64 entries, including older host-compatible releases.
-    result = {'schema': 1, 'id': IDENTIFIER, 'releases': [indexed[k] for k in sorted(indexed, reverse=True)[:64]]}
+    result = {'schema': 1, 'id': selected.id, 'releases': [indexed[k] for k in sorted(indexed, reverse=True)[:64]]}
     encoded = (json.dumps(result, indent=2, ensure_ascii=False) + '\n').encode()
     require(len(encoded) <= MAX_FEED, 'Feed exceeds 256 KiB')
     return encoded
 
 
-def ensure_branch(api):
+def ensure_branch(api, channel='stable'):
+    branch = config(channel).feed_branch
     prefix = '/repos/' + REPOSITORY
     try:
-        api.request('GET', prefix + '/git/ref/heads/' + BRANCH)
+        api.request('GET', prefix + '/git/ref/heads/' + branch)
         return
     except ApiError as error:
         if error.status != 404:
@@ -179,20 +200,21 @@ def ensure_branch(api):
     require(not repo.get('private'), 'The repository must be public')
     head = api.request('GET', prefix + '/git/ref/heads/' + quote(repo['default_branch'], safe=''))
     try:
-        api.request('POST', prefix + '/git/refs', {'ref': 'refs/heads/' + BRANCH, 'sha': head['object']['sha']})
+        api.request('POST', prefix + '/git/refs', {'ref': 'refs/heads/' + branch, 'sha': head['object']['sha']})
     except ApiError as error:
         if error.status != 422:
             raise
         # A simultaneous publication may have created the branch first.
-        api.request('GET', prefix + '/git/ref/heads/' + BRANCH)
+        api.request('GET', prefix + '/git/ref/heads/' + branch)
 
 
-def commit_feed(api, release, pause=time.sleep):
-    ensure_branch(api)
+def commit_feed(api, release, pause=time.sleep, channel='stable'):
+    selected = config(channel)
+    ensure_branch(api, channel)
     path = '/repos/' + REPOSITORY + '/contents/launcher-updates.json'
     for attempt in range(6):
         try:
-            current = api.request('GET', path + '?ref=' + BRANCH)
+            current = api.request('GET', path + '?ref=' + selected.feed_branch)
         except ApiError as error:
             if error.status != 404:
                 raise
@@ -205,11 +227,11 @@ def commit_feed(api, release, pause=time.sleep):
             previous = json.loads(raw)
         else:
             raw = b''
-            previous = {'schema': 1, 'id': IDENTIFIER, 'releases': []}
-        updated = merge_feed(previous, release)
+            previous = {'schema': 1, 'id': selected.id, 'releases': []}
+        updated = merge_feed(previous, release, channel)
         if updated == raw:
             return False
-        body = {'message': 'Publish SwitchLauncher ' + release['version'], 'branch': BRANCH,
+        body = {'message': 'Publish ' + selected.name + ' ' + release['version'], 'branch': selected.feed_branch,
                 'content': base64.b64encode(updated).decode()}
         if current:
             body['sha'] = current['sha']
@@ -224,17 +246,19 @@ def commit_feed(api, release, pause=time.sleep):
     raise RuntimeError('Feed update retry limit reached')
 
 
-def publish(api, tag, fetch=download):
-    version(tag.removeprefix('v'))
-    require(tag.startswith('v'), 'Use a versioned release tag such as v1.003.009')
+def publish(api, tag, fetch=download, channel='stable'):
+    selected = config(channel)
+    value = tag_version(tag, channel)
     prefix = '/repos/' + REPOSITORY
     repo = api.request('GET', prefix)
     require(not repo.get('private'), 'The repository must be public')
     release = api.request('GET', prefix + '/releases/tags/' + quote(tag, safe=''))
     require(not release.get('draft'), 'Publish the release before updating its feed')
-    require(not release.get('prerelease'), 'Prereleases are excluded from the stable update feed')
+    require(bool(release.get('prerelease')) == selected.prerelease,
+            'Test releases must be marked as prerelease' if selected.prerelease else
+            'Prereleases are excluded from the stable update feed')
     require(release.get('tag_name') == tag, 'Unexpected release tag')
-    filename = ASSET_PREFIX + '-' + tag[1:] + '.zip'
+    filename = asset_name(value, channel)
     assets = api.request('GET', prefix + '/releases/' + str(release['id']) + '/assets?per_page=100')
     matches = [asset for asset in assets if asset.get('name') == filename and asset.get('state') == 'uploaded']
     require(len(matches) == 1, 'Attach ' + filename + ' to the release before publishing, then retry this workflow')
@@ -246,25 +270,26 @@ def publish(api, tag, fetch=download):
         path = Path(temporary) / filename
         fetch(expected_url, path)
         require(path.stat().st_size == asset['size'], 'Downloaded asset size differs from GitHub metadata')
-        entry = inspect_archive(path, tag, feed_url())
+        entry = inspect_archive(path, tag, feed_url(channel=channel), channel=channel)
     if asset.get('digest'):
         require(asset['digest'] == 'sha256:' + entry['sha256'], 'Downloaded asset checksum differs from GitHub metadata')
     notes = release.get('body') or ''
     entry['notes'] = notes.encode()[:8192].decode('utf-8', errors='ignore')
-    changed = commit_feed(api, entry)
-    return {'version': entry['version'], 'feed': feed_url(), 'changed': changed}
+    changed = commit_feed(api, entry, channel=channel)
+    return {'version': entry['version'], 'channel': channel, 'feed': feed_url(channel=channel), 'changed': changed}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
+    parser.add_argument('--channel', choices=CHANNELS, default='stable')
     args = parser.parse_args()
     require(os.environ.get('GITHUB_REPOSITORY', REPOSITORY) == REPOSITORY, 'This publisher is configured for ' + REPOSITORY)
-    result = publish(GitHub(os.environ.get('GH_TOKEN', '')), args.tag)
+    result = publish(GitHub(os.environ.get('GH_TOKEN', '')), args.tag, channel=args.channel)
     print(json.dumps(result, indent=2))
     if summary := os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(summary, 'a', encoding='utf-8') as output:
-            output.write(f"Published **SwitchLauncher {result['version']}** to the [stable feed]({result['feed']}).\n")
+            output.write(f"Published **{config(args.channel).name} {result['version']}** to the [{args.channel} feed]({result['feed']}).\n")
 
 
 if __name__ == '__main__':

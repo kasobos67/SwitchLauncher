@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import base64
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -11,9 +10,7 @@ import unittest
 import warnings
 import zipfile
 
-spec = importlib.util.spec_from_file_location('publisher', Path(__file__).parents[1] / 'tools/publish_feed.py')
-p = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(p)
+from tools import publish_feed as p
 
 
 def make_zip(path, version='1.003.007', feed=None, extra=None):

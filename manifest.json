@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "id": "switch-ui",
-  "name": "Switch UI",
+  "id": "switch-ui-test",
+  "name": "Switch UI Test",
   "api": {
     "major": 1,
     "min_minor": 1
@@ -28,8 +28,8 @@
   "sounds": "assets/sounds",
   "loading_scene": "loading.json",
   "host_contract": "launcher-v1.0",
-  "version": "1.004.000",
+  "version": "1.004.002",
   "updates": {
-    "feed": "https://raw.githubusercontent.com/kasobos67/SwitchLauncher/update-feed/launcher-updates.json"
+    "feed": "https://raw.githubusercontent.com/kasobos67/SwitchLauncher/test-update-feed/launcher-updates.json"
   }
 }

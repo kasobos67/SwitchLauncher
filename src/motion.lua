@@ -1,5 +1,18 @@
 -- Switch presentation animation tracks. Kept outside the host app.
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Scroll spring adapted from SwitchPS5 1.002.001 pe/core/tween.hpp.
+-- Copyright (C) 2026 BlackBearReloaded
 local motion={}
+-- Same critically damped scroll spring as SwitchPS5's tween::Spring (omega 24).
+-- Retain velocity when the target changes so held directions and reversals flow.
+motion.scroll=function(value,velocity,target,dt,decay)
+    local x=value-target;local rate=velocity+24*x
+    decay=decay or math.exp(-24*dt)
+    value=target+(x+rate*dt)*decay
+    velocity=(velocity-24*rate*dt)*decay
+    if math.abs(value-target)<1e-4 and math.abs(velocity)<1e-3 then return target,0 end
+    return value,velocity
+end
 local tracks={}
 tracks.k_decide_scale={{0.0,1.0,-0.04645446688},{2.0,0.9399999976,0.0},{4.0,1.0,0.01482140459},{6.0,1.00999999,-0.002553308383},{8.0,1.0,0.0}}
 tracks.k_decide_flash={{0.0,0.0,32.0},{1.0,32.0,0.0},{4.0,32.0,0.0},{4.0,32.0,0.0},{8.0,0.0,0.0}}
