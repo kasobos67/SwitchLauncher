@@ -3,6 +3,27 @@
   "id": "switch-ui",
   "releases": [
     {
+      "version": "1.004.003",
+      "host_contract": "launcher-v1.0",
+      "api": {
+        "major": 1,
+        "min_minor": 1
+      },
+      "required_capabilities": [
+        "draw.atlas.v1",
+        "actions.launch.v1",
+        "audio.named-events.v1",
+        "loading.scene.v1",
+        "updates.launcher-packs.v1"
+      ],
+      "state_schema": 1,
+      "url": "https://github.com/kasobos67/SwitchLauncher/releases/download/v1.004.003/SwitchLauncher-1.004.003.zip",
+      "sha256": "91d28d9dd65961e2bfaf43307ab4f732aa1baabc9d0028225edbbb8c39aebbc3",
+      "bytes": 18395787,
+      "min_app": "1.004.000",
+      "notes": "- Coordinates dialog surfaces, shadows and backdrops when opening and closing, including Credits and small multiplayer windows.\r\n- Remembers the selected HOME game, shortcut and library position while navigating.\r\n- Shows button hints for the action currently available on HOME.\r\n- Keeps long titles scrolling after unrelated input, fades clipped edges and softens the loop restart.\r\n- Gives empty libraries an Open Game files action, hides Go offline when already offline and explains unavailable options.\r\n- Handles covers invalidated by a native rescan without falling back to the built-in launcher."
+    },
+    {
       "version": "1.004.002",
       "host_contract": "launcher-v1.0",
       "api": {
