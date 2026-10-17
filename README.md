@@ -1,12 +1,8 @@
-<p align="center">
-  <img src="docs/images/icon-source.png" alt="SwitchPS5 icon" width="160" height="160">
-</p>
-
-<h1 align="center">SwitchLauncher</h1>
+# SwitchLauncher
 
 A Nintendo Switch-inspired launcher for [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden) on PS5, maintained by [kasobos67](https://github.com/kasobos67).
 
-SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an installable Lua launcher pack. It provides its own HOME screen, software library, menus, artwork, transitions and interface sounds while using ProsperoEden's existing emulation backend and services. It is not compatible with the older, prebuilt SwitchPS5 app
+SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an installable Lua launcher pack. It provides its own HOME screen, software library, menus, artwork, transitions and interface sounds while using ProsperoEden's existing emulation backend and services.
 
 ## Compatibility
 
@@ -95,6 +91,34 @@ https://raw.githubusercontent.com/kasobos67/SwitchLauncher/update-feed/launcher-
 
 Publishing a stable release runs the repository workflow. It validates the uploaded launcher ZIP and updates that feed with its version, download address, size, checksum and compatibility requirements. Older compatible entries are retained, and the host chooses the newest version it can run. Drafts and prereleases are excluded from the stable feed.
 
+### Test versions
+
+**Switch UI Test** is a separate optional pack for trying changes before they reach stable users. It uses the same ProsperoEden 1.004.000 launcher API and includes the same performance improvements. Install the test pack manually once, then receive later test versions through its own About menu. The stable pack cannot install the test pack through its updater.
+
+| | Stable | Test |
+| --- | --- | --- |
+| Launcher name | Switch UI | Switch UI Test |
+| Pack folder / ID | `switch-ui` | `switch-ui-test` |
+| Development branch | `main` | `test-versions` |
+| Release tag | `v1.004.002` | `test-v1.004.002` |
+| Release asset | `SwitchLauncher-1.004.002.zip` | `SwitchLauncher-Test-1.004.002.zip` |
+| GitHub release type | Stable release | Prerelease |
+| Feed branch | `update-feed` | `test-update-feed` |
+
+The test pack's permanent feed is:
+
+```text
+https://raw.githubusercontent.com/kasobos67/SwitchLauncher/test-update-feed/launcher-updates.json
+```
+
+Extract `SwitchLauncher-Test-<version>.zip` and copy its **`switch-ui-test`** folder into `/data/prosperoeden/launchers/`. Select **Switch UI Test** through the launcher's **System Settings → Themes → Launcher**, or the built-in launcher's **Settings → Appearance → Launcher**. Both packs can remain installed; use that same picker to switch back to stable.
+
+Appearance, profile artwork, recent ordering and updater diagnostics are separate for each pack. The test pack stores them in `/data/prosperoeden/config/launcher-state/switch-ui-test.json`. Native emulator settings, native user profiles, games and saves are shared. Switching packs does not copy or delete either pack's preferences.
+
+Test builds are experimental. Installing a new test version still requires confirmation. Stable users are never offered test releases by the stable feed. Each channel has its own version sequence; the installed manifest always uses three numeric components, without a `-test` suffix.
+
+See [TESTING.md](TESTING.md) for initial GitHub setup, test publication and promotion to stable.
+
 The host validates the downloaded pack, preserves saved state and retains the previous version for recovery. No GitHub account or token is needed on the PS5.
 
 ### Will another manual installation be needed?
@@ -114,6 +138,71 @@ If the interface cannot open, close the app and create an empty file at:
 ```
 
 Restart the app to use the built-in interface. Remove that recovery file before selecting an external launcher again. The installed pack and saved launcher state can remain in place.
+
+## Source and releases
+
+This repository contains the launcher and its release tools. ProsperoEden itself remains in the [upstream repository](https://github.com/blackbearreloaded/ProsperoEden).
+
+```text
+src/                  Lua presentation and motion source
+assets/               Artwork, font and sound resources
+manifest.json         Pack identity, version and permanent update address
+loading.json          Loading-screen presentation
+tools/                Local pack builder and release-feed publisher
+tests/                Packaging, publisher and refresh-policy tests
+.github/workflows/    Stable/test feed publishers and test-branch pack builds
+```
+
+One large artwork atlas is stored as `.tga.gz` so the complete source can be uploaded through GitHub's website. The pack builder restores the original TGA bytes; the installed artwork is unchanged. The source archive therefore needs packaging before it can be installed.
+
+### Build an installable ZIP
+
+Python 3.10 or newer is sufficient. No Git command, emulator compilation or extra Python package is required.
+
+```sh
+python tools/build_release.py
+```
+
+On the `test-versions` source branch, the supplied manifest selects the test identity by default. You can explicitly build either channel from the shared source:
+
+```sh
+python tools/build_release.py --channel test
+python tools/build_release.py --channel stable
+```
+
+The builder assigns the matching pack ID, launcher name, permanent feed, archive folder and filename. These are chosen when packaging; an installed pack never changes its update address.
+
+This creates `dist/SwitchLauncher-<version>.zip` and its SHA-256 file. The builder combines the Lua source, inserts the manifest version and restores the compressed source atlas. Development tools and screenshots are omitted from the installed pack.
+
+Run the tests with:
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+Contributors with Lua 5.4 can also run the refresh-policy regression checks:
+
+```sh
+lua tests/refresh_policy.lua
+lua tests/scroll_motion.lua
+```
+
+These check that navigation avoids repeated HOME metadata reads while profiles, settings, live status and update notifications still refresh correctly. Scrolling is compared against reference samples generated from the SwitchPS5 1.002.001 spring. Lua is only needed for these extra development checks, not for building or installing a release.
+
+### Publish a versioned release
+
+1. Update the launcher source and set a new three-part numeric version in `manifest.json`.
+2. Build and test the pack. Keep `id`, `state_schema` and the permanent feed unchanged unless deliberately planning a migration.
+3. Upload the updated repository files through GitHub's website.
+4. Create a release using the matching **`v<version>`** tag, targeting the uploaded source.
+5. Attach **`SwitchLauncher-<version>.zip`** before publishing. Its checksum file can be attached too.
+6. Publish as a stable release, then wait for **Actions → Publish launcher update feed** to finish.
+
+The stable workflow uses the repository's built-in token with Contents write permission. It creates the `update-feed` branch on first publication. The test workflow creates `test-update-feed` separately. The first feed becomes available after its successful publication run; no manually uploaded feed asset is needed.
+
+Do not replace a published version's ZIP. Publish a new version instead. If publication needs retrying, use **Actions → Publish launcher update feed → Run workflow**, enter the existing tag and run it from the default branch. The publisher rejects changed archives for an existing version.
+
+Keep this repository public and retain the feed branch. Repository rules must allow the workflow to update it. This release sets `MIN_APP` to `1.004.000` in `tools/publish_feed.py`; the feed keeps earlier compatible entries for older hosts. Before publishing a later pack that needs a newer host, update that minimum and the manifest's API/capability requirements as appropriate.
 
 ## Credits and licensing
 

@@ -26,7 +26,7 @@ class PackageTests(unittest.TestCase):
                          'updates':{'feed':publisher.feed_url()}}
         self.write_manifest()
         (self.root/'src/motion.lua').write_text('local motion = {}\n')
-        (self.root/'src/ui.lua').write_text('local PACK_VERSION = "@PACK_VERSION@"\nreturn {}\n')
+        (self.root/'src/ui.lua').write_text('local PACK_VERSION = "@PACK_VERSION@"\nlocal PACK_NAME = "Switch UI"\nreturn {}\n')
         (self.root/'assets/profiles.tga.gz').write_bytes(gzip.compress(b'artwork fixture', mtime=0))
         (self.root/'assets/font.pefont').write_bytes(b'font fixture')
         (self.root/'assets/sounds/focus_01.wav').write_bytes(b'audio fixture')
