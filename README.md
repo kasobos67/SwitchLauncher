@@ -155,55 +155,6 @@ tests/                Packaging, publisher and refresh-policy tests
 
 One large artwork atlas is stored as `.tga.gz` so the complete source can be uploaded through GitHub's website. The pack builder restores the original TGA bytes; the installed artwork is unchanged. The source archive therefore needs packaging before it can be installed.
 
-### Build an installable ZIP
-
-Python 3.10 or newer is sufficient. No Git command, emulator compilation or extra Python package is required.
-
-```sh
-python tools/build_release.py
-```
-
-On the `test-versions` source branch, the supplied manifest selects the test identity by default. You can explicitly build either channel from the shared source:
-
-```sh
-python tools/build_release.py --channel test
-python tools/build_release.py --channel stable
-```
-
-The builder assigns the matching pack ID, launcher name, permanent feed, archive folder and filename. These are chosen when packaging; an installed pack never changes its update address.
-
-This creates `dist/SwitchLauncher-<version>.zip` and its SHA-256 file. The builder combines the Lua source, inserts the manifest version and restores the compressed source atlas. Development tools and screenshots are omitted from the installed pack.
-
-Run the tests with:
-
-```sh
-python -m unittest discover -s tests -v
-```
-
-Contributors with Lua 5.4 can also run the refresh-policy regression checks:
-
-```sh
-lua tests/refresh_policy.lua
-lua tests/scroll_motion.lua
-```
-
-These check that navigation avoids repeated HOME metadata reads while profiles, settings, live status and update notifications still refresh correctly. Scrolling is compared against reference samples generated from the SwitchPS5 1.002.001 spring. Lua is only needed for these extra development checks, not for building or installing a release.
-
-### Publish a versioned release
-
-1. Update the launcher source and set a new three-part numeric version in `manifest.json`.
-2. Build and test the pack. Keep `id`, `state_schema` and the permanent feed unchanged unless deliberately planning a migration.
-3. Upload the updated repository files through GitHub's website.
-4. Create a release using the matching **`v<version>`** tag, targeting the uploaded source.
-5. Attach **`SwitchLauncher-<version>.zip`** before publishing. Its checksum file can be attached too.
-6. Publish as a stable release, then wait for **Actions → Publish launcher update feed** to finish.
-
-The stable workflow uses the repository's built-in token with Contents write permission. It creates the `update-feed` branch on first publication. The test workflow creates `test-update-feed` separately. The first feed becomes available after its successful publication run; no manually uploaded feed asset is needed.
-
-Do not replace a published version's ZIP. Publish a new version instead. If publication needs retrying, use **Actions → Publish launcher update feed → Run workflow**, enter the existing tag and run it from the default branch. The publisher rejects changed archives for an existing version.
-
-Keep this repository public and retain the feed branch. Repository rules must allow the workflow to update it. This release sets `MIN_APP` to `1.004.000` in `tools/publish_feed.py`; the feed keeps earlier compatible entries for older hosts. Before publishing a later pack that needs a newer host, update that minimum and the manifest's API/capability requirements as appropriate.
-
 ## Credits and licensing
 
 - **Eden developers and contributors:** emulation core.
