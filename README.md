@@ -2,24 +2,11 @@
 
 A Nintendo Switch-inspired launcher for [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden) on PS5, maintained by [kasobos67](https://github.com/kasobos67).
 
-SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an installable Lua launcher pack. It provides its own HOME screen, software library, menus, artwork, transitions and interface sounds while using ProsperoEden's existing emulation backend and services.
+SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an installable Lua launcher pack. It provides its own HOME screen, software library, menus, artwork, transitions and interface sounds while using ProsperoEden's existing emulation backend and services. It is not compatible with the older, prebuilt SwitchPS5 app
 
 ## Compatibility
 
-**SwitchLauncher 1.004.000 supports the official ProsperoEden 1.004.000 release.**
-
-Install ProsperoEden first, then add this Lua launcher pack. No custom application build or emulator compilation is required. This pack uses launcher API 1.1 and the official launcher-pack updater, including launcher-drawn update pages.
-
-| Application | Status |
-| --- | --- |
-| Official ProsperoEden 1.004.000 | Supported |
-| Official ProsperoEden 1.003.000 and earlier | Not supported by this pack; update the application first |
-| Future ProsperoEden releases | Require the same compatible launcher contract and capabilities |
-| Original standalone SwitchPS5 app | Separate application; not required |
-
-This version exposes **Post-processing** in global and per-game Video settings, and **Compact memory** in global and per-game Performance settings. Post-processing choices come from the host, including installed user presets, and require Vulkan. Compact memory remains off by default; enabling it can introduce stutters in games that repeatedly rewrite memory.
-
-Switch UI keeps its own light/dark presentation. The built-in launcher's custom-wallpaper picker is not exposed by this pack; existing wallpaper preferences are preserved.
+Minimum required ProsperoEden version: **1.004.000**.
 
 ## Interface
 
