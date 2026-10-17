@@ -4,22 +4,22 @@ A Nintendo Switch-inspired launcher for [ProsperoEden](https://github.com/blackb
 
 SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an installable Lua launcher pack. It provides its own HOME screen, software library, menus, artwork, transitions and interface sounds while using ProsperoEden's existing emulation backend and services.
 
-## Current compatibility
+## Compatibility
 
-**This build is not yet compatible with the current official ProsperoEden app.**
+**SwitchLauncher 1.004.000 supports the official ProsperoEden 1.004.000 release.**
 
-It requires the development/test application with the proposed **launcher pack updater** support. The official launcher runtime currently exposes API 1.0; this pack requires API 1.1 and `updates.launcher-packs.v1`. Installing it into the current official app will not add those host features.
-
-Compatibility with an official release will be announced here after the required support is released and tested. Do not assume that every new ProsperoEden release supports this pack.
+Install ProsperoEden first, then add this Lua launcher pack. No custom application build or emulator compilation is required. This pack uses launcher API 1.1 and the official launcher-pack updater, including launcher-drawn update pages.
 
 | Application | Status |
 | --- | --- |
-| Current official ProsperoEden | Not supported by this build yet |
-| Development/test host with launcher updater support | Supported test configuration |
-| Future official release with the required support | Pending release and verification |
-| Original standalone SwitchPS5 app | Separate application; not required for this launcher |
+| Official ProsperoEden 1.004.000 | Supported |
+| Official ProsperoEden 1.003.000 and earlier | Not supported by this pack; update the application first |
+| Future ProsperoEden releases | Require the same compatible launcher contract and capabilities |
+| Original standalone SwitchPS5 app | Separate application; not required |
 
-The optional `updates.launcher-packs.view.v1` feature lets Switch UI draw the updater inside About. A compatible updater host without that optional feature uses its native update page.
+This version exposes **Post-processing** in global and per-game Video settings, and **Compact memory** in global and per-game Performance settings. Post-processing choices come from the host, including installed user presets, and require Vulkan. Compact memory remains off by default; enabling it can introduce stutters in games that repeatedly rewrite memory.
+
+Switch UI keeps its own light/dark presentation. The built-in launcher's custom-wallpaper picker is not exposed by this pack; existing wallpaper preferences are preserved.
 
 ## Interface
 
@@ -33,19 +33,20 @@ The optional `updates.launcher-packs.view.v1` feature lets Switch UI draw the up
 
 Screenshots supplied by the project author. Games shown are not included.
 
-- Switch-inspired HOME screen, library navigation and title bubbles.
+- Switch-inspired HOME screen with twelve game positions, light/dark blank tiles, library navigation and title bubbles.
 - Profile selection and profile artwork.
 - Light and dark appearances, transitions and the original interface sound mapping.
 - Dedicated controllers, multiplayer and game-files shortcuts.
 - Access to supported ProsperoEden settings and services.
 - Launcher updates in About, with a separate Credits window.
+- A **ProsperoEden Update** dialog for application updates, using the same progress-bar style as launcher updates.
 - Optimized Lua drawing, query and layout handling.
 
 The interface is English-only and uses a fixed layout. New ProsperoEden features may require an updated launcher before controls for them appear here.
 
 ## Installation
 
-Use these steps **once a compatible application build is installed**. Existing test-host users can follow them now.
+Install or update to the official **ProsperoEden 1.004.000** app before adding this pack.
 
 1. Download the attached **`SwitchLauncher-<version>.zip`** from this repository's [Releases](https://github.com/kasobos67/SwitchLauncher/releases). Use the named launcher ZIP, rather than GitHub's automatically generated source-code archive.
 2. Close ProsperoEden completely.
@@ -62,7 +63,7 @@ Use these steps **once a compatible application build is installed**. Existing t
    /data/prosperoeden/launchers/switch-ui/manifest.json
    ```
 
-5. Open the compatible ProsperoEden app. In its built-in interface, go to **Settings → Appearance → Launcher**, then select **Switch UI**.
+5. Open ProsperoEden. In its built-in interface, go to **Settings → Appearance → Launcher**, then select **Switch UI**.
 
 Keep the folder name `switch-ui`. The repository is called SwitchLauncher, while the internal pack ID remains `switch-ui` to preserve existing launcher state.
 
@@ -70,7 +71,9 @@ The pack uses your established `/data/prosperoeden` data. It does not replace th
 
 ### Moving from an earlier test pack
 
-Install this repository's pack manually once, following the steps above. Earlier test packs point to a different update source; ordinary updates deliberately cannot change that address.
+If your installed pack already uses the SwitchLauncher feed below, install this version through **About → Check for updates → Update** after updating ProsperoEden. There is no need to copy the pack again.
+
+Earlier test packs using another repository/feed need one manual installation using the steps above. Ordinary updates deliberately cannot change the feed address.
 
 Preserve this file when replacing the pack:
 
@@ -78,7 +81,7 @@ Preserve this file when replacing the pack:
 /data/prosperoeden/config/launcher-state/switch-ui.json
 ```
 
-That keeps launcher-specific choices such as profile artwork and library ordering. Do not delete the surrounding data folder, profiles or saves.
+That keeps launcher-specific choices such as the light/dark appearance, profile artwork and recent-game ordering. Do not delete the surrounding data folder, profiles or saves.
 
 ## How updates work
 
@@ -86,12 +89,12 @@ That keeps launcher-specific choices such as profile artwork and library orderin
 
 | Update | What it updates | Where it comes from |
 | --- | --- | --- |
-| ProsperoEden application update | The application, emulation backend and native services | ProsperoEden's own update system |
+| ProsperoEden application update | The application, emulation backend and native services | The **ProsperoEden Update** dialog and ProsperoEden's own update system |
 | SwitchLauncher update | This launcher's Lua code, layout, artwork and sounds | This repository's launcher releases |
 
 Updating SwitchLauncher does not update the emulator. Updating ProsperoEden does not automatically update this launcher. Compatible application updates preserve the launcher in the data directory.
 
-Once this pack is installed, open **About** from the HOME screen, choose **Check for updates**, then **Update** when a compatible release is offered. The host can also check in the background. **Updates are installed only after confirmation.**
+Once this pack is installed, open **About** from the HOME screen, choose **Check for updates**, then **Update** when a compatible release is offered. With automatic launcher checks enabled, Switch UI requests a background check after boot and after returning from a game. **Updates are installed only after confirmation.**
 
 Each release has its own version and download link. The application reads a permanent feed at:
 
@@ -105,7 +108,7 @@ The host validates the downloaded pack, preserves saved state and retains the pr
 
 ### Will another manual installation be needed?
 
-Normal compatible launcher updates can be installed through About. A manual installation may still be needed if the permanent repository/feed address changes, an update requires a saved-state migration, or the installed host no longer provides the required runtime API. Changing the publisher is intentionally not an ordinary automatic update.
+Normal compatible launcher updates can be installed through About. A manual installation may still be needed if the permanent repository/feed address changes or the installed host can no longer open the pack. A release requiring a newer ProsperoEden version is offered only after the host meets its compatibility requirements; update the application first, then check for the launcher update again. Saved-state schema changes require an explicit migration rather than being silently installed. Changing the publisher is intentionally not an ordinary automatic update.
 
 Launcher versions are independent of ProsperoEden versions. A new backend setting is not automatically added to this fixed interface; the launcher author must expose it in a later pack update. Users can receive that change through this repository's updater without rebuilding ProsperoEden.
 
@@ -166,7 +169,7 @@ The workflow uses the repository's built-in token with Contents write permission
 
 Do not replace a published version's ZIP. Publish a new version instead. If publication needs retrying, use **Actions → Publish launcher update feed → Run workflow**, enter the existing tag and run it from the default branch. The publisher rejects changed archives for an existing version.
 
-Keep this repository public and retain the feed branch. Repository rules must allow the workflow to update it. Before publishing a pack that needs a newer host, update `MIN_APP` in `tools/publish_feed.py` and the manifest's API/capability requirements as appropriate.
+Keep this repository public and retain the feed branch. Repository rules must allow the workflow to update it. This release sets `MIN_APP` to `1.004.000` in `tools/publish_feed.py`; the feed keeps earlier compatible entries for older hosts. Before publishing a later pack that needs a newer host, update that minimum and the manifest's API/capability requirements as appropriate.
 
 ## Credits and licensing
 

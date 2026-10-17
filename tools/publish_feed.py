@@ -20,7 +20,7 @@ REPOSITORY = 'kasobos67/SwitchLauncher'
 BRANCH = 'update-feed'
 IDENTIFIER = 'switch-ui'
 ASSET_PREFIX = 'SwitchLauncher'
-MIN_APP = '1.003.000'
+MIN_APP = '1.004.000'
 MAX_ARCHIVE = 128 * 1024**2
 MAX_FEED = 256 * 1024
 

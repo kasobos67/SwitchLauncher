@@ -2,6 +2,7 @@
 -- External presentation. All emulation and persistent application operations use the host API.
 local PACK_VERSION = "@PACK_VERSION@"
 local LAUNCHER_UPDATES = true
+local HOME_SLOTS = 12
 local face_buttons={"cross","circle","square","triangle"}
 local face_indices={cross=1,circle=2,square=3,triangle=4}
 local face_labels={"Cross","Circle","Square","Triangle"}
@@ -9,7 +10,8 @@ local S = {screen="home",previous="home",transition=100,focus=1,zone="games",pro
     library=1,scroll=0,scroll_target=0,strip=0,strip_target=0,elapsed=100,time=0,
     category=1,content=false,row=1,menu_scroll=0,modal=nil,modal_time=0,save="",
     games={},tiles={},profiles={},prefs={},choices={},status={},state={},message="",poll=0}
-local U={row=1,status={},busy=false,can_update=true,view=false,credits=false}
+local U={row=1,status={},busy=false,can_update=true,view=false,credits=false,has_update=false,check_pending=true,next_poll=0}
+local record_update_failure
 local C = {base=0x2d2d2d,text=0xf5f5f5,title=0xffffff,copy=0xcfcfcf,meta=0xbdbdbd,
     line=0x555555,row=0x414141,accent=0x30d5c8,shortcut=0x505050,warn=0xffb36a}
 local function clamp(x,a,b) return math.max(a,math.min(b,x)) end
@@ -40,8 +42,125 @@ local function A(name,p)
     if name~="sound" and name~="state.save" then query_cache={};rows_cache={};layout_cache={} end
     if name=="library.refresh" or name=="game.delete" or name=="profile.choose" or name=="download.start" then S.library_dirty=true end
     local r=host.action(name,p or empty_args)
-    if r and r.ok==false then S.message=r.error or r.message or "Could not save. Please try again." end
+    if r and r.ok==false then
+        local reason=r.error or r.message
+        S.message=type(reason)=="string" and reason~="" and reason or "Could not complete this operation. Please try again."
+        if name:sub(1,17)=="launcher_updates." and record_update_failure then
+            U.action_error=S.message;record_update_failure({error=S.message,operation=name})
+        end
+    elseif name:sub(1,17)=="launcher_updates." then
+        U.action_error=nil;U.failure=nil
+        if name=="launcher_updates.check" or name=="launcher_updates.download" then U.last_failure_key=nil end
+    end
     return r
+end
+local function save_state(quiet)
+    local result=host.action("state.save",S.state)
+    local ok=type(result)=="table" and result.ok==true
+    if ok and type(S.state.updater_errors)=="table" and #S.state.updater_errors>0 then U.diagnostic_saved=true end
+    if not quiet then
+        local previous=S.state_save_error
+        S.state_save_error=nil;S.state_save_detail=nil
+        if not ok then
+            local reason=type(result)=="table" and (result.error or result.message) or nil
+            local detail=type(reason)=="string" and reason~="" and reason or "The host did not report a reason."
+            local lower=detail:lower()
+            S.state_save_error="Launcher settings could not be saved."
+            if lower:find("no space left",1,true) or lower:find("quota exceeded",1,true) then
+                S.state_save_error="Launcher settings could not be saved. Free some storage and try again."
+            elseif lower:find("permission denied",1,true) or lower:find("operation not permitted",1,true) or lower:find("read-only",1,true) then
+                S.state_save_error="Launcher settings could not be saved. Access to the data folder was denied."
+            end
+            S.state_save_detail=detail
+            S.message=S.state_save_error
+        elseif S.message==previous then S.message="" end
+    end
+    return ok
+end
+local function bounded_error(value,limit)
+    local text=tostring(value or ""):gsub("[Aa]uthorization:[^\r\n]*","Authorization: [redacted]")
+    text=text:gsub("[Bb]earer%s+[%w%._%-]+","Bearer [redacted]"):gsub("[Bb]asic%s+[%w%+/=]+","Basic [redacted]")
+    text=text:gsub("(https?://[^%s?#]+)[?#][^%s]*","%1?[redacted]"):gsub("[%z\1-\31\127]"," ")
+    local end_at=math.min(#text,limit or 1200)
+    while end_at>0 and (text:byte(end_at+1) or 0)>=128 and (text:byte(end_at+1) or 0)<192 do end_at=end_at-1 end
+    return text:sub(1,end_at)..(end_at<#text and "..." or "")
+end
+local function update_failure_description(raw,code)
+    local value=string.lower(tostring(raw or ""))
+    local function has(words) for _,word in ipairs(words) do if value:find(word,1,true) then return true end end;return false end
+    if code=="storage_full" or has({"no space left","not enough space","not enough storage","disk full","enospc","disk quota","edquot"}) then
+        return {code="storage_full",title="Not enough free storage.",detail="Free space on the device, then try the update again."}
+    elseif code=="permission_denied" or has({"permission denied","access denied","read-only file system","erofs","eacces","operation not permitted"}) then
+        return {code="permission_denied",title="Access to update files was denied.",detail="Check access to ProsperoEden's data folder, then try again."}
+    elseif code=="timeout" or has({"timed out","timeout"}) then
+        return {code="timeout",title="The update server did not respond.",detail="Check your connection or try again later."}
+    elseif code=="server_unreachable" or has({"could not resolve","couldn't resolve","could not connect","couldn't connect","failed to connect","host unreachable","network is unreachable","connection refused","connection reset","network unavailable","dns"}) then
+        return {code="server_unreachable",title="Cannot reach the update server.",detail="Check your connection, then try again. The server may also be temporarily unavailable."}
+    elseif has({"certificate","ssl","tls","secure connection"}) then
+        return {code="secure_connection",title="A secure connection could not be established.",detail="Check the console date and time and try again later."}
+    elseif has({"404","not found"}) and has({"http","download","update","release","feed"}) then
+        return {code="not_found",title="The update file could not be found.",detail="Check for updates again. The release or update source may have moved."}
+    elseif has({"429","rate limit","http 403","http status 403"}) then
+        return {code="server_limit",title="The update server refused the request.",detail="The server may be limiting requests. Wait a while, then try again."}
+    elseif has({"http 500","http 502","http 503","http 504","http status 500","http status 502","http status 503","http status 504"}) then
+        return {code="server_error",title="The update server is unavailable.",detail="Try again later."}
+    elseif has({"checksum","sha256","sha-256","crc","archive hash","archive digest","zip","invalid lua","syntax error","script validation"}) then
+        return {code="invalid_download",title="The downloaded files failed verification.",detail="Check for updates and download again. Invalid files will not be installed."}
+    elseif has({"incompatible","unsupported api","capability","host contract","state schema"}) then
+        return {code="incompatible",title="This update is not compatible.",detail="Use a compatible ProsperoEden version or wait for a compatible launcher release."}
+    elseif has({"feed","release list","duplicate release","json.exception","invalid https","require https"}) then
+        return {code="invalid_feed",title="The update information is invalid.",detail="The update source needs to be corrected. Try again later."}
+    elseif has({"recovery","transaction","replacement destination"}) then
+        return {code="recovery_required",title="The previous update needs recovery.",detail="Restart the app before trying again."}
+    elseif has({"cannot write","cannot create","cannot synchronize","cannot replace","cannot remove","write failed","failed writing","failure writing","write error","writing output","could not save"}) then
+        return {code="write_failed",title="The update files could not be saved.",detail="Check free space and access to the app's data folder, then try again."}
+    elseif has({"finish","pending operation","not ready","unavailable during"}) then
+        return {code="busy",title="Another operation is still running.",detail="Finish or cancel the current operation, then try again."}
+    end
+    return {code="unexpected",title="Something went wrong with the update.",detail="Try again. Keep the diagnostic details if the problem continues."}
+end
+record_update_failure=function(status)
+    local raw=bounded_error(status.error or "The host did not provide an error reason.",1200)
+    local failure=update_failure_description(raw,status.error_code)
+    U.failure=failure
+    local key=raw..":"..tostring(status.checked_at or "")..":"..(status.operation or U.operation or "update")
+    if U.last_failure_key==key then return end
+    U.last_failure_key=key
+    local log=type(S.state.updater_errors)=="table" and S.state.updater_errors or {};S.state.updater_errors=log
+    log[#log+1]={code=failure.code,error=raw,operation=status.operation or U.operation or "update",launcher=PACK_VERSION,
+        host=bounded_error(S.status.version or "unknown",80),release=bounded_error((status.release or {}).version or U.target_version or "",80),
+        checked_at=status.checked_at or U.checked_at,clock=S.status.clock or "",launcher_time=math.floor(S.time)}
+    while #log>10 do table.remove(log,1) end
+    U.diagnostic_pending=U.view
+    U.diagnostic_saved=not U.view and save_state(true) or false
+end
+local function accept_update_status(status)
+    U.status=status or {}
+    local phase=U.status.phase
+    if U.status.checked_at then U.checked_at=U.status.checked_at end
+    if phase=="failed" then record_update_failure(U.status)
+    elseif phase=="checking" or phase=="downloading" or phase=="validating" or phase=="installing" then
+        U.operation=phase;U.failure=nil;U.last_failure_key=nil;U.action_error=nil
+    elseif not U.action_error then U.failure=nil end
+    if phase=="available" then
+        local release=U.status.release or {}
+        U.target_version=release.version;U.has_update=type(release.version)=="string" and release.version~=PACK_VERSION
+    elseif phase=="current" or phase=="installed" or phase=="unconfigured" then U.has_update=false end
+end
+local function poll_launcher_updates()
+    local status=Q("launcher_updates");accept_update_status(status)
+    if not U.check_pending then return end
+    local phase=status.phase or "idle"
+    if status.automatic_checks==false or phase=="checking" or phase=="current" or phase=="available" or phase=="unconfigured" then U.check_pending=false;return end
+    if S.intro<2 or S.time<(U.retry_at or 0) or S.launch_time or U.view then return end
+    local launch=(S.status.launch or {}).stage or "idle"
+    local app_phase=(S.status.update_status or {}).phase or 0
+    if launch~="idle" or (app_phase~=0 and app_phase~=6 and app_phase~=7) then return end
+    if phase~="idle" and phase~="failed" and phase~="cancelled" and phase~="installed" then return end
+    -- Use the host's asynchronous check without opening a page or showing background errors.
+    local result=host.action("launcher_updates.check",empty_args)
+    query_cache.launcher_updates=nil;U.retry_at=S.time+5
+    if result and result.ok then U.check_pending=false;U.next_poll=S.time+.25 end
 end
 local function sound(event)
     if event=="focus" then
@@ -55,6 +174,7 @@ local function sound(event)
 end
 local text_args,box_args,line_args,image_args,circle_args,ring_args={},{},{},{},{},{}
 local full_uv={0,0,1,1}
+local home_blank_uv={{0,0,0.5,1},{0.5,0,0.5,1}}
 local function text(value,x,y,size,ink,align,width)
     size=size or 30
     local drawn=S.prefs.large_text and size<30 and math.min(30,size*1.3) or size
@@ -111,15 +231,20 @@ local function clip(x,y,w,h) local p=clip_args;p.x=x;p.y=y;p.w=w;p.h=h;D("clip",
 local function unclip() D("unclip") end
 local function transform(scale,x,y,dx,dy) local p=transform_args;p.scale=scale or 1;p.ox=x or 0;p.oy=y or 0;p.dx=dx or 0;p.dy=dy or 0;D("transform",p) end
 local function untransform() D("untransform") end
-local function shadow(x,y,w,h,r,soft,a,ink) local p=shadow_args;p.x=x;p.y=y;p.w=w;p.h=h;p.radius=r or 0;p.softness=soft or 7.5;p.color=ink or 0;p.alpha=a or .4;D("shadow",p) end
+local function shadow_alpha(a) return (a or .4)*(S.state.white and .3 or 1) end
+local function shadow(x,y,w,h,r,soft,a,ink) local p=shadow_args;p.x=x;p.y=y;p.w=w;p.h=h;p.radius=r or 0;p.softness=soft or 7.5;p.color=ink or 0;p.alpha=shadow_alpha(a);D("shadow",p) end
 local function curve(name,frame) return motion[name] and motion[name](frame) or 1 end
 local function focus(x,y,w,h,circular,amount)
     amount=amount or 1; local bx,by,bw,bh=x-7.5,y-7.5,w+15,h+15
     local radius=circular and bw*.5 or 3
-    local clips={{bx-18,by-18,bw+36,y-by+18},{bx-18,y+h,bw+36,by+bh+18-y-h},
-                 {bx-18,y,x-bx+18,h},{x+w,y,bx+bw+18-x-w,h}}
     local glow_alpha=.31*amount*(.5+curve("cursor_glow_effect",S.time*60))
-    for _,r in ipairs(clips) do clip(r[1],r[2],r[3],r[4]);shadow(bx,by+4.5,bw,bh,radius,6,glow_alpha,0x15516e);unclip() end
+    -- Circular focus is drawn behind its icon, so its shadow stays circular.
+    if circular then shadow(bx,by+4.5,bw,bh,radius,6,glow_alpha,0x15516e)
+    else
+        local clips={{bx-18,by-18,bw+36,y-by+18},{bx-18,y+h,bw+36,by+bh+18-y-h},
+                     {bx-18,y,x-bx+18,h},{x+w,y,bx+bw+18-x-w,h}}
+        for _,r in ipairs(clips) do clip(r[1],r[2],r[3],r[4]);shadow(bx,by+4.5,bw,bh,radius,6,glow_alpha,0x15516e);unclip() end
+    end
     D("border",{x=bx,y=by,w=bw,h=bh,radius=radius,color=0,alpha=0,border=7.5,edge=S.prefs.high_contrast and C.title or C.accent,edge_alpha=amount})
     if not circular then
         local glow_frame=S.prefs.reduce_motion and 0 or S.time*60
@@ -135,7 +260,12 @@ local function focus(x,y,w,h,circular,amount)
 end
 local icon_uv={}
 for i=1,6 do icon_uv[i]={(2+(i-1)*132)/2048,2/1024,128/2048,128/1024} end
-local function symbol(i,x,y,size,ink) image("ui",x-size*.5,y-size*.5,size,size,icon_uv[i],ink or C.text) end
+local function symbol(i,x,y,size,ink)
+    if i==1 then
+        local drawn=size*70/128
+        image(U.has_update and "about_update" or "about",x-drawn*.5,y-drawn*.5,drawn,drawn,nil,ink or C.text)
+    else image("ui",x-size*.5,y-size*.5,size,size,icon_uv[i],ink or C.text) end
+end
 local function grid_icon(x,y,size) image("icons",x-size*.5,y-size*.5,size,size,{0,0,64/384,63/128},C.title) end
 local function pad(key,x,y,size)
     local action=face_indices[key]
@@ -181,13 +311,49 @@ local function frame(title,icon)
     else image("icons",96,70,60,60,{128/384,0,40/384,40/128},C.text) end
     text(title,178,114,40,C.title,"left",1430); line(96,157,1824,157)
 end
+local default_avatar={icon=0,color=0}
+local function valid_avatar(value)
+    return type(value)=="table" and type(value.icon)=="number" and value.icon>=0 and value.icon<147 and value.icon%1==0
+        and type(value.color)=="number" and value.color>=0 and value.color<72 and value.color%1==0
+end
+local function unique_profile_name(profile)
+    local count=0;for _,p in ipairs(S.profiles) do if p.name==profile.name then count=count+1 end end
+    return count==1
+end
+local function avatar_settings(profile)
+    local saved=profile.handle and S.state.avatars[profile.handle]
+    if valid_avatar(saved) then return saved end
+    if unique_profile_name(profile) then
+        local alias=S.state.avatar_aliases[profile.name] or S.state.avatars[profile.name]
+        if valid_avatar(alias) then return alias end
+    end
+    return default_avatar
+end
+local function store_avatar(profile,icon,color)
+    local value={icon=icon,color=color};local key=profile.handle or profile.name
+    S.state.avatars[key]=value
+    if unique_profile_name(profile) then S.state.avatar_aliases[profile.name]={handle=profile.handle,icon=icon,color=color} end
+end
+local function recover_avatar_aliases()
+    local changed=false
+    for _,profile in ipairs(S.profiles) do
+        local value=avatar_settings(profile)
+        if value~=default_avatar then
+            local key=profile.handle or profile.name;local alias=S.state.avatar_aliases[profile.name]
+            if not valid_avatar(S.state.avatars[key]) or (unique_profile_name(profile) and
+                (not valid_avatar(alias) or alias.handle~=profile.handle or alias.icon~=value.icon or alias.color~=value.color)) then
+                store_avatar(profile,value.icon,value.color);changed=true
+            end
+        end
+    end
+    return changed
+end
 local function avatar(profile,x,y,size,circular)
-    local saved=S.state.avatars[profile.handle or profile.name] or S.state.avatars[profile.name] or {icon=0,color=0}; local icon=saved.icon or 0
+    local saved=avatar_settings(profile);local icon=saved.icon
     local rgb=profile_colors[(saved.color or 0)+1] or 0xffcccc
     if circular then circle(x+size*.5,y+size*.5,size*.5,rgb) else box(x,y,size,size,rgb) end
     D("image",{asset="profiles",x=x,y=y,w=size,h=size,uv={(icon%8)/8,math.floor(icon/8)/19,1/8,1/19},color=0xffffff,radius=circular and size*.5 or 0})
 end
-local function save_state() A("state.save",S.state) end
 local function refresh_models()
     S.prefs=Q("preferences"); S.profiles=Q("profiles"); S.status=Q("status"); S.home=Q("home"); S.choices=Q("choices")
     rows_cache={};layout_cache={}
@@ -209,7 +375,7 @@ local function refresh_models()
     end
     if S.state.white then C.base=0xebebeb; C.text=0x252525; C.title=0x252525; C.copy=0x646464; C.meta=0x646464; C.row=0xffffff; C.line=0xc7c7c7; C.shortcut=0xffffff
     else C.base=0x2d2d2d; C.text=0xf5f5f5; C.title=0xffffff; C.copy=0xcfcfcf; C.meta=0xbdbdbd; C.row=0x414141; C.line=0x555555; C.shortcut=0x505050 end
-    local order={tostring(S.generation),S.sort or "",S.home.last_file or ""}
+    local order={tostring(S.generation),S.scanning and "scanning" or "ready",S.sort or "",S.home.last_file or ""}
     for _,file in ipairs(S.state.recent or {}) do order[#order+1]=file end
     order[#order+1]="|"
     for _,recent in ipairs(S.home.recents or {}) do order[#order+1]=recent.file end
@@ -218,12 +384,21 @@ local function refresh_models()
     S.tiles_signature=signature;S.tiles={}; local seen={}
     local function add(file)
         local g=(S.game_lookup or empty_args)[file]
-        if g and not seen[file] and not g.remote and #S.tiles<7 then S.tiles[#S.tiles+1]=g;seen[file]=true end
+        if g and not seen[file] and not g.remote and #S.tiles<HOME_SLOTS then S.tiles[#S.tiles+1]=g;seen[file]=true end
     end
     add(S.home.last_file)
     for _,file in ipairs(S.state.recent or {}) do add(file) end
     for _,recent in ipairs(S.home.recents or {}) do add(recent.file) end
-    for _,g in ipairs(S.games) do if #S.tiles>=7 then break end;add(g.file) end
+    for _,g in ipairs(S.games) do if #S.tiles>=HOME_SLOTS then break end;add(g.file) end
+    -- Empty firmware positions are decorative. Only real entries receive focus.
+    S.home_library=#S.games>#S.tiles
+    S.home_count=#S.tiles+(S.home_library and 1 or 0)
+    if S.zone=="games" then
+        if S.home_count==0 then
+            if not S.scanning then S.zone="shortcuts";S.focus=1 end
+        else S.focus=clamp(S.focus,1,S.home_count) end
+    end
+    S.strip_target=math.min(S.strip_target,math.max(0,(S.home_count-4)*405))
 end
 local function open(screen,quiet)
     if S.screen==screen then return end
@@ -251,9 +426,12 @@ local function marquee(value,x,y,w,size)
     clip(x,y-size,w,size*1.7);text(value,x-offset,y,size,C.accent);unclip()
 end
 local function render_home()
-    for i,p in ipairs(S.profiles) do local x=100.5+(i-1)*90; avatar(p,x,62,72,true);ring(x+36,98,37,2,C.title,.7)
-        if p.playing and not (S.zone=="profiles" and S.profile==i) then box(x+16,144,40,4,C.accent,1,2) end
-        if S.zone=="profiles" and S.profile==i then focus(x,62,72,72,true);text(p.name,x+36,178,28,C.accent,"center",240) end
+    for i,p in ipairs(S.profiles) do local x=100.5+(i-1)*90
+        local selected=S.zone=="profiles" and S.profile==i
+        if selected then focus(x,62,72,72,true) end
+        avatar(p,x,62,72,true);ring(x+36,98,37,2,C.title,.7)
+        if p.playing and not selected then box(x+16,144,40,4,C.accent,1,2) end
+        if selected then text(p.name,x+36,178,28,C.accent,"center",240) end
     end
     text(S.status.clock,1814,115.5,30,C.text,"right")
     local phase=(S.status.room or {}).phase or 0;local ux=phase==2 and 1354 or (phase==1 or phase==3) and 1318 or 1282
@@ -262,16 +440,25 @@ local function render_home()
     local ga=S.prefs.reduce_motion and 1 or curve(S.first_start and "home_starter_alpha" or "home_entry_alpha",intro*60)/255
     local gs=S.prefs.reduce_motion and 1 or curve(S.first_start and "home_starter_scale" or "home_entry_scale",intro*60)
     opacity(ga);transform(gs,960,483)
-    local g=S.tiles[S.focus]; local title=g and g.name or "All Software"; local selected_x=160.5+(S.focus-1)*405-S.strip
+    local g=S.tiles[S.focus]; local title=g and g.name or (S.home_library and "All Software" or ""); local selected_x=160.5+(S.focus-1)*405-S.strip
     if S.zone=="games" then local w=math.min(900,math.max(450,measured(title,32)));marquee(title,clamp(selected_x+192-w*.5,112,1808-w),258,w,32) end
     clip(0,278,1920,426)
-    for i=1,#S.tiles+1 do local x=160.5+(i-1)*405-S.strip; local all=i>#S.tiles
+    for i=1,math.max(HOME_SLOTS,S.home_count or 0) do
+        local x=160.5+(i-1)*405-S.strip;local all=S.home_library and i==#S.tiles+1;local blank=not all and not S.tiles[i]
         if x+384>0 and x<1920 then
             local scale=(S.launch_time and S.focus==i) and curve("decide_scale",S.launch_time*60) or 1
             transform(S.prefs.reduce_motion and 1 or scale,x+192,483)
-            if all then shadow(x+72,364.5,240,240,120,7.5,.4);circle(x+192,483,120,C.shortcut);grid_icon(x+192,483,108)
-            else cover(S.tiles[i],x,291,384,384) end
-            if S.zone=="games" and S.focus==i then focus(all and x+72 or x,all and 363 or 291,all and 240 or 384,all and 240 or 384,all) end
+            if blank then
+                -- Baked P_Blank material: no cover lookup or live blur for empty slots.
+                image("home_blank",x-12,279,408,408,home_blank_uv[S.state.white and 2 or 1])
+            elseif all then
+                shadow(x+72,364.5,240,240,120,7.5,.4)
+                if S.zone=="games" and S.focus==i then focus(x+72,363,240,240,true) end
+                circle(x+192,483,120,C.shortcut);grid_icon(x+192,483,108)
+            else
+                cover(S.tiles[i],x,291,384,384)
+                if S.zone=="games" and S.focus==i then focus(x,291,384,384,false) end
+            end
             if S.launch_time and S.focus==i and not all then
                 box(x,291,384,384,0xffffff,curve("decide_flash",S.launch_time*60)/255)
                 local size=450*curve("launch_effect_scale",S.launch_time*60);clip(x,291,384,384)
@@ -284,22 +471,24 @@ local function render_home()
     opacity(ga);transform(gs,960,816)
     local names={"About","Game files","Multiplayer","Controllers","System Settings","Screen off"}
     local inks={0xff4d4d,0xffae2e,0x4a9bdb,C.title,C.title,C.title}
-    for i=1,6 do local x=555+(i-1)*162;shadow(x-66,751.5,132,132,66,7.5,.35);circle(x,816,66,C.shortcut)
+    for i=1,6 do local x=555+(i-1)*162;shadow(x-66,751.5,132,132,66,7.5,.35)
         if S.zone=="shortcuts" and S.focus==i then focus(x-66,750,132,132,true);text(names[i],x,918,24,C.accent,"center",330) end
+        circle(x,816,66,C.shortcut)
         symbol(i,x,816,i<=4 and 132 or 96,inks[i])
     end
     untransform();popopacity()
-    if S.message~="" then text(S.message,160.5,740,22,C.warn,"left",1680)
-    elseif (S.home.status or "")~="" then text(S.home.status,160.5,740,22,C.copy,"left",1680) end
+    local notice=S.message~="" and S.message or S.state_save_error
+    if notice then text(notice,960,720,22,C.warn,"center",1608)
+    elseif (S.home.status or "")~="" then text(S.home.status,960,720,22,C.copy,"center",1608) end
     footer({{"triangle","Game settings"},{"cross","Select"}})
 end
 local function bubble(title,x,y,w)
     local center=x+w*.5
-    w=math.max(180,math.min(980,measured(title,30)+42));local bx=clamp(center-w*.5,132,1776-w)
+    w=math.max(180,math.min(980,measured(title,30)+42));local bx=clamp(center-w*.5,130.5,1786.5-w)
     shadow(bx,y-82.5,w,65,4.5,6,.36)
     -- Two mirrored halves preserve the original tip and its single joined shadow.
-    image("ui",x+115.5,y-25.75,15,27,{258/2048,136/1024,12/2048,40/1024},0xffffff,.36)
-    image("ui",x+130.5,y-25.75,15,27,{270/2048,136/1024,-12/2048,40/1024},0xffffff,.36)
+    image("ui",x+115.5,y-25.75,15,27,{258/2048,136/1024,12/2048,40/1024},0xffffff,shadow_alpha(.36))
+    image("ui",x+130.5,y-25.75,15,27,{270/2048,136/1024,-12/2048,40/1024},0xffffff,shadow_alpha(.36))
     image("ui",x+114,y-22,16.5,19.5,{2/2048,136/1024,11/2048,13/1024},C.shortcut)
     image("ui",x+130.5,y-22,16.5,19.5,{13/2048,136/1024,-11/2048,13/1024},C.shortcut)
     box(bx,y-84,w,65,C.shortcut,1,4.5)
@@ -356,13 +545,18 @@ local function settings_rows(category,per_game)
             table.insert(rows,7,choice("hud_size","Overlay size",{"Regular","Medium","Large"}))
             table.insert(rows,8,choice("hud_corner","Overlay corner",{"Top left","Top right","Bottom left","Bottom right"}))
         end
+        if type(S.choices.post_processing)=="table" and #S.choices.post_processing>0 then
+            local post=choice("post_processing","Post-processing",S.choices.post_processing)
+            post.help="Applies a visual preset to the game picture. Requires the Vulkan renderer."
+            table.insert(rows,per_game and 5 or 6,post)
+        end
         if S.choices.frame_gen_state==0 then
             for i=#rows,1,-1 do if rows[i].field=="frame_gen" or rows[i].field=="frame_gen_target" or rows[i].field=="frame_gen_multiplier" then table.remove(rows,i) end end
         end
     elseif category=="Performance" then
-        local fields={"block_list","async_shaders","fast_gpu","unsafe_cpu","unsafe_dma","reactive_flushing","skip_invalidation"}
-        local labels={"Compile ahead","Asynchronous shaders","Faster GPU emulation","Faster CPU emulation","Faster DMA","Reactive flushing","Skip CPU invalidation"}
-        local helps={"Compiles code used in earlier sessions as a game starts.","Draws effects once their shaders are ready, reducing compilation pauses.","Lower GPU accuracy can be faster, but graphics may be incorrect.","Less exact floating-point math may affect some games.","Less exact GPU transfers may affect graphics.","Keeps GPU readback accurate. Disabling it may affect effects.","Fewer invalidation checks may leave stale textures."}
+        local fields={"block_list","async_shaders","fast_gpu","unsafe_cpu","unsafe_dma","reactive_flushing","skip_invalidation","compact_memory"}
+        local labels={"Compile ahead","Asynchronous shaders","Faster GPU emulation","Faster CPU emulation","Faster DMA","Reactive flushing","Skip CPU invalidation","Compact memory"}
+        local helps={"Compiles code used in earlier sessions as a game starts.","Draws effects once their shaders are ready, reducing compilation pauses.","Lower GPU accuracy can be faster, but graphics may be incorrect.","Less exact floating-point math may affect some games.","Less exact GPU transfers may affect graphics.","Keeps GPU readback accurate. Disabling it may affect effects.","Fewer invalidation checks may leave stale textures.","Gives back memory left mostly empty. Can cause stutters in games that keep rewriting it; leave off unless memory runs short."}
         for i,key in ipairs(fields) do rows[#rows+1]=toggle(key,labels[i],helps[i]);rows[#rows].performance=i end
     elseif category=="Audio" then rows={{field="volume",label="Game volume",kind="slider"},toggle("mute","Mute")};if not per_game then rows[#rows+1]={field="menu_volume",label="Menu sounds",kind="slider"} end
     elseif category=="Controls" then
@@ -620,6 +814,20 @@ local update_labels={idle="Ready to check for updates",unconfigured="No update s
     validating="Checking downloaded files...",ready="Installing update...",installing="Installing update...",
     installed="Update complete.",failed="Could not update.",cancelled="Update cancelled."}
 local update_buttons={"Check for updates","Update"}
+local function update_progress(x,y,width,status,indeterminate,complete)
+    box(x,y,width,8,C.line,1,4)
+    local total=status.total or 0
+    local fraction=complete and 1 or total>0 and clamp((status.done or 0)/total,0,1) or 0
+    if indeterminate then
+        if S.prefs.reduce_motion then fraction=1
+        else
+            local length=math.min(200,width)
+            box(x+(S.time*.6%1)*(width-length),y,length,8,C.accent,1,4)
+            return
+        end
+    end
+    if fraction>0 then box(x,y,width*fraction,8,C.accent,1,4) end
+end
 local render_credits
 local function render_about()
     frame("About Switch","info")
@@ -630,27 +838,22 @@ local function render_about()
     text("Switch UI",left,264,40,C.title,"left",720)
     text("v"..installed,right,264,30,C.text,"right",300)
     text("ProsperoEden",left,328,26,C.copy,"left",720)
-    text(S.status.version or "v1.003.000",right,328,26,C.copy,"right",300)
+    text(S.status.version or "v1.004.000",right,328,26,C.copy,"right",300)
     line(x,376,x+w,376,C.line)
 
-    text(status.rollback and phase=="installed" and "Previous version restored." or update_labels[phase] or "Ready",left,448,30,phase=="failed" and C.warn or C.accent,"left",w-inset*2)
-    local detail=S.message~="" and S.message or status.error or ""
+    local failure=U.failure
+    text(failure and failure.title or status.rollback and phase=="installed" and "Previous version restored." or update_labels[phase] or "Ready",left,448,30,failure and C.warn or C.accent,"left",w-inset*2)
+    local detail=failure and failure.detail or S.message~="" and S.message or status.error or ""
     if detail=="" then
         if phase=="available" then detail="Version "..(release.version or "").." is ready to install."
         elseif phase=="downloading" then detail=(status.total or 0)>0 and (math.floor((status.done or 0)/status.total*100).."% downloaded") or "Downloading..."
         elseif phase=="installing" or phase=="ready" or phase=="validating" then detail="Keep the app open until the update finishes."
         elseif phase=="unconfigured" then detail="This launcher does not provide an update source." end
     end
-    text_block(detail,left,496,24,phase=="failed" and C.warn or C.copy,w-inset*2,32,3)
+    text_block(detail,left,496,24,failure and C.warn or C.copy,w-inset*2,32,3)
+    if failure then text("Error: "..failure.code..". "..(U.diagnostic_saved and "Details saved in launcher state." or U.diagnostic_pending and "Return to HOME to save diagnostic details." or "Diagnostic details could not be saved."),left,590,20,C.meta,"left",w-inset*2) end
     if U.busy then
-        local width=w-inset*2
-        box(left,600,width,8,C.line,1,4)
-        local total=status.total or 0;local fraction=total>0 and clamp((status.done or 0)/total,0,1) or 0
-        if phase=="checking" then
-            if S.prefs.reduce_motion then fraction=1
-            else box(left+(S.time*.6%1)*(width-200),600,200,8,C.accent,1,4) end
-        end
-        if fraction>0 then box(left,600,width*fraction,8,C.accent,1,4) end
+        update_progress(left,600,w-inset*2,status,phase=="checking")
     end
     for i,label in ipairs(update_buttons) do
         local y=648+(i-1)*104;plate(x,y,w,80,U.row==i)
@@ -722,6 +925,7 @@ local function render_avatar()
     end
     unclip();local icon=color and S.avatar_icon or S.avatar_selected-1;local rgb=profile_colors[(color and S.avatar_selected or S.avatar_color+1)]
     box(174,309,300,300,rgb);image("profiles",174,309,300,300,{(icon%8)/8,math.floor(icon/8)/19,1/8,1/19});text(p.name,324,669,30,C.text,"center",348)
+    if S.state_save_error then text_block(S.state_save_error,174,744,22,C.warn,324,32,5) end
     footer({{"circle","Back"},{"cross","OK"}})
 end
 local game_buttons={"A","B","X","Y","L","R","ZL","ZR","+","−","Left stick","Right stick"}
@@ -740,7 +944,7 @@ local function modal_rows()
     if kind=="game" then
         local rows={};for i,label in ipairs(game_categories) do rows[i]=button(label,"game_category");rows[i].category=label end
         rows[1]={label="Console mode",kind="button",action="docked",value=S.game_settings.docked and "Docked" or "Handheld"}
-        local fields={Video={"renderer","resolution","filter","astc","refresh","hud","hud_size","hud_corner","frame_gen","frame_gen_target","frame_gen_multiplier"},
+        local fields={Video={"renderer","resolution","filter","astc","post_processing","refresh","hud","hud_size","hud_corner","frame_gen","frame_gen_target","frame_gen_multiplier"},
             Audio={"volume","mute"},Controls={"controller","vibration"},System={"rng_seed"}}
         for _,row in ipairs(rows) do local count=0;local category=row.category
             if category=="Performance" then
@@ -797,12 +1001,47 @@ local function modal_rows()
     elseif kind=="room" then
         local room=S.status.room or {};if room.phase==2 then return {button("Disconnect","room_leave")} end
         if data.page=="private" then return {button("Address","room_host"),button("Port","room_port"),button("Nickname","room_nickname"),button("Password","room_password"),button("Connect","room_join")}
-        elseif data.page=="public" then local rows={button("Nickname: "..(S.room_form.nickname or "Player"),"room_nickname")};local public=Q("public_rooms");for i,r in ipairs(public.rooms) do rows[#rows+1]={label=r.name,kind="button",action="room_public",index=i,value=r.players.." / "..r.capacity,room=r} end;return rows end
+        elseif data.page=="public" then local rows={{label="Nickname",value=S.room_form.nickname or "Player",kind="button",action="room_nickname"}};local public=Q("public_rooms");for i,r in ipairs(public.rooms) do rows[#rows+1]={label=r.name,kind="button",action="room_public",index=i,value=r.players.." / "..r.capacity,room=r} end;return rows end
         return {button("Public rooms","room_public_page"),button("Private room","room_private_page")}
     end
     return {}
 end
-local modal_titles={menu_bindings="Menu buttons",game="Game settings",game_options="Game settings",overlay="Overlay options",choice="Choose an option",sort="Sort Software",theme="Basic Theme",launchers="Choose a Launcher",mods="Mods",saves="Save Data",confirm="Are you sure?",queue="Downloads",download_source="Download from",download="Download and play",pair_servers="Choose a Server",sync_profile="Save Sync",sync_launch="Save Sync",sync_after="Save Sync",update="Software Update",release_notes="What's New",system_info="System Information",pairing="Pairing"}
+local app_update_labels={
+    [0]="A ProsperoEden update is available.",[1]="Starting download...",
+    [2]="Downloading update...",[3]="Preparing update files...",
+    [4]="Ready to install.",[5]="Installing ProsperoEden...",
+    [6]="Update cancelled.",[7]="Could not update ProsperoEden."
+}
+local function render_app_update()
+    local status=S.status.update_status or {};local offer=S.status.update or {}
+    local phase=status.phase or 0
+    local rows=modal_rows();S.rows=rows
+    S.modal_row=clamp(S.modal_row,1,math.max(1,#rows))
+    text("Current version: "..(S.status.version or "v1.004.000"),382,332,24,C.copy,"left",1156)
+    if offer.version then text("Available version: "..offer.version,382,380,24,C.copy,"left",1156) end
+    local label=app_update_labels[phase] or "Updating ProsperoEden..."
+    if phase==0 and not offer.version then label="No ProsperoEden update is currently offered." end
+    text(label,382,450,30,phase==7 and C.warn or C.accent,"left",1156)
+    local detail=S.message~="" and S.message or status.error or ""
+    if detail=="" then
+        if phase==2 then
+            detail=(status.total or 0)>0 and (math.floor(clamp((status.done or 0)/status.total,0,1)*100).."% downloaded") or "Downloading..."
+        elseif phase==3 or phase==5 then detail="Keep the app open until the update finishes."
+        elseif phase==4 then detail="Choose Update now to install the downloaded application."
+        elseif phase==0 and offer.version then detail="This updates the ProsperoEden application. Switch UI is updated separately in About." end
+    end
+    text_block(detail,382,494,24,phase==7 and C.warn or C.copy,1156,32,3)
+    if phase>=1 and phase<=5 then
+        update_progress(382,600,1156,status,phase<4 and (status.total or 0)<=0,phase>=4)
+    end
+    local top=828-#rows*80
+    for i,row in ipairs(rows) do
+        local y=top+(i-1)*80
+        plate(382,y,1156,78,i==S.modal_row)
+        text(row.label,418,y+48,30,C.text,"left",1084)
+    end
+end
+local modal_titles={menu_bindings="Menu buttons",game="Game settings",game_options="Game settings",overlay="Overlay options",choice="Choose an option",sort="Sort Software",theme="Basic Theme",launchers="Choose a Launcher",mods="Mods",saves="Save Data",confirm="Are you sure?",queue="Downloads",download_source="Download from",download="Download and play",pair_servers="Choose a Server",sync_profile="Save Sync",sync_launch="Save Sync",sync_after="Save Sync",update="ProsperoEden Update",release_notes="What's New",system_info="System Information",pairing="Pairing"}
 local function modal_panel(x,y,w,h,title)
     shadow(x,y+1.5,w,h,0,6,.6);box(x,y,w,h,C.base);text(title,x+42,y+86,48,C.title,"left",w-84)
 end
@@ -831,35 +1070,66 @@ local function render_sync_setup()
 end
 local function render_room()
     local data=S.modal_data;local room=S.status.room or {phase=0};local page=data.page or "choice"
-    modal_panel(500,150,920,780,page=="choice" and "Multiplayer" or page=="public" and "Public rooms" or "Private room")
-    text(({"Offline","Connecting...","Connected","Leaving...","Connection failed"})[room.phase+1],542,264,24,C.copy)
-    local rows=modal_rows();S.rows=rows
-    if page=="choice" then
-        for i,row in ipairs(rows) do local y=350+(i-1)*140;D("border",{x=542,y=y,w=836,h=120,radius=0,color=S.modal_row==i and C.row or C.base,border=S.modal_row==i and 3 or 0,edge=C.accent})
-            text(row.label,568,y+42,24,C.title);text(i==1 and "Browse the public directory and choose a room." or "Connect using an address, port and password.",568,y+86,24,C.copy,"left",784)
+    local left,right,width=548,1372,824
+    local notice=S.message~="" and S.message or (room.error or "")
+    local public=page=="public" and Q("public_rooms") or nil
+    if notice=="" and public then notice=public.error or "" end
+    local connected=room.phase==2
+    shadow(500,151.5,920,780,0,6,.6);box(500,150,920,780,C.base)
+    text(connected and "Multiplayer" or page=="choice" and "Multiplayer" or page=="public" and "Public rooms" or "Private room",left,238,40,C.title,"left",width)
+    text(({"Offline","Connecting...","Connected","Leaving...","Connection failed"})[(room.phase or 0)+1],left,284,24,connected and C.accent or C.copy,"left",width)
+    if public and not connected then text(public.refreshing and "Refreshing..." or (#public.rooms.." public rooms"),right,284,24,C.copy,"right",width*.5) end
+    line(left,316,right,316,C.line)
+    local rows=modal_rows();S.rows=rows;S.modal_row=clamp(S.modal_row,1,math.max(1,#rows))
+    if connected then
+        text(room.name,left,378,30,C.title,"left",width)
+        text("Players",left,422,22,C.meta,"left",width)
+        for i,name in ipairs(room.members or {}) do
+            if i<=(notice~="" and 6 or 8) then text(name,left+36,462+(i-1)*32,26,C.copy,"left",width-72) end
         end
-        text("Join a room before launching a game, then choose",542,700,24,C.copy);text("Local Wireless in the game.",542,734,24,C.copy)
-        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},1378,878,24)
-    elseif room.phase==2 then
-        text(room.name,542,380,30,C.title,"left",836);for i,name in ipairs(room.members or {}) do if i<=8 then text(name,562,426+(i-1)*42,24,C.copy) end end
-        rows_draw(rows,542,812,836,S.modal_row,1);hints({{"cross","Disconnect"},{"circle","Back"}},1378,890,24)
+        local top=notice~="" and 686 or 734
+        plate(left,top,width,72,S.modal_row==1);text("Disconnect",left+36,top+45.5,28,C.text,"left",width-72)
+        hints({{"cross","Disconnect"},{"circle","Back"}},right,878,24)
+    elseif page=="choice" then
+        for i,row in ipairs(rows) do
+            local y=344+(i-1)*128;plate(left,y,width,112,S.modal_row==i)
+            text(row.label,left+36,y+41,28,C.text,"left",width-72)
+            text(i==1 and "Browse the public directory and choose a room." or "Connect using an address, port and password.",left+36,y+81,24,C.copy,"left",width-72)
+        end
+        text_block("Join a room before launching a game, then choose Local Wireless in the game.",left+36,664,24,C.copy,width-72,36,2)
+        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},right,878,24)
     elseif page=="private" then
         local form=S.room_form;local values={form.host,tostring(form.port or 24872),form.nickname,(form.password or "")~="" and "••••••" or "",""}
-        for i,row in ipairs(rows) do row.value=values[i] end;rows_draw(rows,542,350,836,S.modal_row,5)
-        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},1378,890,24)
+        for i,row in ipairs(rows) do row.value=values[i] end
+        rows_draw(rows,left,338,width,S.modal_row,5,false,84)
+        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},right,878,24)
     else
-        local public=Q("public_rooms");text(public.refreshing and "Loading public rooms..." or (#public.rooms.." public rooms"),542,300,24,C.copy)
-        local top=math.max(0,S.modal_row-7)
-        for i=top+1,math.min(#rows,top+7) do local row=rows[i];local y=322+(i-top-1)*64
-            D("border",{x=542,y=y,w=836,h=60,radius=0,color=i==S.modal_row and C.row or C.base,border=i==S.modal_row and 3 or 0,edge=C.accent})
-            text(row.label,560,y+25,24,C.title,"left",580);text(row.value or "",1360,y+25,24,C.copy,"right",180)
-            if row.room then text(row.room.game..(row.room.password and " | Password" or "")..(row.room.compatible and "" or " | Incompatible"),560,y+49,20,C.copy,"left",796) end
+        -- Keep the nickname separate from the scrolling, two-line room entries.
+        plate(left,338,width,72,S.modal_row==1)
+        text(rows[1].label,left+36,383.5,28,C.text,"left",250)
+        text(rows[1].value,right-36,383.5,28,C.copy,"right",width-358)
+        local visible=notice~="" and 4 or 5;local count=#rows-1
+        local top=clamp(S.modal_row-1-visible,0,math.max(0,count-visible))
+        for i=top+2,math.min(#rows,top+visible+1) do
+            local row=rows[i];local y=426+(i-top-2)*76
+            plate(left,y,width,74,i==S.modal_row)
+            text(row.label,left+36,y+31,26,C.text,"left",width-252)
+            text(row.value,right-36,y+31,24,C.copy,"right",156)
+            local detail=row.room.game..(row.room.password and " | Password" or "")..(row.room.compatible and "" or " | Incompatible")
+            text(detail,left+36,y+62,22,C.copy,"left",width-72)
         end
-        if public.error~="" then text(public.error,542,816,22,C.warn,"left",836) end
-        hints({{"cross","Select"},{"triangle","Refresh"},{"circle","Back"}},1378,890,24)
+        if count==0 then text(public.refreshing and "Loading public rooms..." or "No public rooms found.",left+36,476,24,C.copy,"left",width-72) end
+        if count>visible then
+            local height=visible*76;local handle=math.max(28,height*visible/count)
+            box(right+14,426,6,height,C.line,.35,3)
+            box(right+14,426+top/(count-visible)*(height-handle),6,handle,C.meta,.8,3)
+        end
+        hints({{"cross","Select"},{"triangle","Refresh"},{"circle","Back"}},right,878,24)
     end
-    if S.message~="" or (room.error or "")~="" then text(S.message~="" and S.message or room.error,542,862,22,C.warn,"left",836) end
+    if notice~="" then text_block(notice,left+36,786,22,C.warn,width-72,28,2) end
+    line(left,826,right,826,C.line)
 end
+
 local function render_modal()
     if S.modal=="game" then
         box(0,0,1920,1080,C.base);frame("Options");cover(S.game,156,228,312,312)
@@ -924,23 +1194,19 @@ local function render_modal()
         local title=modal_titles[S.modal] or "Settings";if S.modal=="game_options" then title=S.modal_data.category end
         modal_panel(340,180,1240,720,title)
         if S.game and (S.modal=="game" or S.modal=="game_options" or S.modal=="mods" or S.modal=="saves") then text(S.game.name,382,314,24,C.meta,"left",1156) end
-        if S.modal=="release_notes" or S.modal=="system_info" or S.modal=="pairing" then
+        if S.modal=="update" then render_app_update()
+        elseif S.modal=="release_notes" or S.modal=="system_info" or S.modal=="pairing" then
             local value=S.modal=="release_notes" and ((S.status.update or {}).notes or "No release notes are available.") or S.modal=="system_info" and Q("setup").details or ""
             if S.modal=="pairing" then local p=Q("pairing");if (p.address or "")~="" then D("qr",{text=p.address,x=1080,y=354,w=380,h=380,color=0,background=0xffffff}) end;value=(p.code or "").."\n"..(p.address or "").."\n"..(p.error or "");if p.stage==3 then value="Paired as "..p.user end end
             local i=0;for part in tostring(value):gmatch("[^\n]+") do if i<12 then text(part,382,350+i*38,26,C.copy,"left",1156);i=i+1 end end
         else
             local rows=modal_rows();S.rows=rows;rows_draw(rows,382,334,1156,S.modal_row,5,S.modal=="game_options")
             if #rows==0 then text("Nothing to show yet.",960,510,30,C.meta,"center") end
-            if S.modal=="update" then
-                local u=S.status.update_status or {};local offer=S.status.update or {}
-                local value=(u.error or "")~="" and u.error or offer.version or "No application update is currently offered."
-                text(value,382,802,24,C.copy,"left",1156)
-            end
             if S.modal=="sync_launch" then local u=(S.status.launch or {}).sync or {};text(u.error or "Synchronizing save data...",382,802,24,C.copy,"left",1156) end
             if S.modal=="download" then local d=S.download_status or {};text(d.error or (d.total and d.total>0 and (math.floor(d.done/d.total*100).."% downloaded") or "Waiting for the download..."),382,802,24,C.copy,"left",1156) end
         end
         hints({{"updown","Select"},{"circle","Back"},{"cross","OK"}},1538,848,24)
-        if S.message~="" then text(S.message,382,806,24,C.warn,"left",1156) end
+        if S.message~="" and S.modal~="update" then text(S.message,382,806,24,C.warn,"left",1156) end
     end
     untransform();popopacity()
 end
@@ -985,13 +1251,13 @@ local function run_button(row,per_game)
     elseif action=="choose_profile" then local r=A("profile.choose",{handle=S.profiles[row.profile].handle});if r.ok then refresh_models() end
     elseif action=="add_profile" then local r=A("profile.add");refresh_models();sound(r.ok and "toggle" or "error")
     elseif action=="rename_profile" then
-        local p=S.profiles[S.profile];local saved=S.state.avatars[p.handle or p.name] or S.state.avatars[p.name]
+        local p=S.profiles[S.profile];local saved=avatar_settings(p);local old_name=p.name
         local r=A("profile.rename",{index=S.profile-1,step=1});refresh_models()
-        if r.ok and saved and S.profiles[S.profile] then local next_profile=S.profiles[S.profile];S.state.avatars[next_profile.handle or next_profile.name]=saved;save_state() end
+        if r.ok and S.profiles[S.profile] then local next_profile=S.profiles[S.profile];store_avatar(next_profile,saved.icon,saved.color);if old_name~=next_profile.name then S.state.avatar_aliases[old_name]=nil;S.state.avatars[old_name]=nil end;save_state() end
         sound(r.ok and "account_select" or "error")
     elseif action=="remove_profile" then show_modal("confirm",{action="remove_profile"})
     elseif action=="avatar_icon" or action=="avatar_color" then
-        local p=S.profiles[S.profile];local current=S.state.avatars[p.handle or p.name] or S.state.avatars[p.name] or {icon=0,color=0}
+        local p=S.profiles[S.profile];local current=avatar_settings(p)
         S.avatar_icon=current.icon;S.avatar_color=current.color;S.avatar_mode=action=="avatar_icon" and "icon" or "color";S.avatar_selected=(S.avatar_mode=="icon" and current.icon or current.color)+1;S.screen="avatar"
     elseif action=="files_select" then local r=A("game_files.set",{path=S.files.path});S.message=r.ok and "Saved. Reopen Switch to use this folder." or S.message;sound(r.ok and "saved" or "error")
     elseif action=="files_parent" then
@@ -1003,7 +1269,7 @@ local function run_button(row,per_game)
         if next_folder.ok then S.files=next_folder;S.row=1;S.message="";sound("select") else S.message="This folder cannot be opened.";sound("error") end
     elseif action=="launcher_update" then
         if not LAUNCHER_UPDATES then return end
-        U.status=Q("launcher_updates");U.row=1;U.credits=false
+        accept_update_status(Q("launcher_updates"));U.row=1;U.credits=false
         local custom=false
         for _,capability in ipairs(Q("runtime").capabilities or {}) do
             if capability=="updates.launcher-packs.view.v1" then custom=true;break end
@@ -1149,10 +1415,12 @@ local function input(event)
         if key=="up" then if S.zone=="shortcuts" then S.zone="games";S.focus=1;sound("focus") elseif #S.profiles>0 then S.zone="profiles";S.profile=1;sound("focus") end
         elseif key=="down" then if S.zone~="shortcuts" then S.zone="shortcuts";S.focus=1;sound("focus") end
         elseif key=="left" or key=="right" then
-            local before=S.focus;S.focus=clamp(S.focus+(key=="right" and 1 or -1),1,S.zone=="shortcuts" and 6 or #S.tiles+1)
+            local before=S.focus;S.focus=clamp(S.focus+(key=="right" and 1 or -1),1,S.zone=="shortcuts" and 6 or math.max(1,S.home_count or 0))
             if S.focus~=before then sound("focus");if S.zone=="games" then sound("home_scroll") end else sound("scroll_limit") end
         elseif key=="cross" then
-            if S.zone=="games" then if S.focus>#S.tiles then open("library") else request_launch() end
+            if S.zone=="games" then
+                if S.home_library and S.focus==#S.tiles+1 then open("library")
+                elseif S.tiles[S.focus] then request_launch() else sound("error") end
             else local screens={"about","files","room","controllers","settings","off"};local target=screens[S.focus]
                 if target=="room" then S.room_form=Q("room_form");show_modal("room",{page="choice"});sound("album_open")
                 else open(target);if target=="files" then S.files=Q("game_files")
@@ -1186,15 +1454,24 @@ local function input(event)
         local delta=key=="left" and -1 or key=="right" and 1 or key=="up" and -columns or key=="down" and columns or key=="l1" and -columns*6 or key=="r1" and columns*6 or 0
         S.avatar_selected=clamp(S.avatar_selected+delta,1,count)
         if key=="cross" then
-            if S.avatar_mode=="icon" then S.avatar_icon=S.avatar_selected-1;S.avatar_mode="color";S.avatar_selected=S.avatar_color+1;sound("select")
-            else local p=S.profiles[S.profile];S.state.avatars[p.handle or p.name]={icon=S.avatar_icon,color=S.avatar_selected-1};save_state();S.screen="profile";sound("saved") end
+            local p=S.profiles[S.profile]
+            if p then
+                local icon=S.avatar_mode=="icon" and S.avatar_selected-1 or S.avatar_icon
+                local color=S.avatar_mode=="color" and S.avatar_selected-1 or S.avatar_color
+                store_avatar(p,icon,color)
+                if save_state() then
+                    S.message="";S.avatar_icon=icon;S.avatar_color=color
+                    if S.avatar_mode=="icon" then S.avatar_mode="color";S.avatar_selected=color+1;sound("select")
+                    else S.screen="profile";sound("saved") end
+                else sound("error") end
+            end
         else sound("focus") end;return
     elseif S.screen=="profile" then
         local p=S.profiles[S.profile]
         if key=="circle" then sound("modal_close");local target=S.profile_return or "home";S.profile_return=nil;S.screen=target;S.transition=0;sound("back")
         elseif key=="up" or key=="down" or key=="left" or key=="right" then S.profile=clamp(S.profile+((key=="down" or key=="right") and 1 or -1),1,math.min(8,#S.profiles+1));S.message="";sound("focus")
         elseif key=="options" and p then
-            local current=S.state.avatars[p.handle or p.name] or S.state.avatars[p.name] or {icon=0,color=0};S.avatar_icon=current.icon;S.avatar_color=current.color;S.avatar_selected=current.icon+1;S.avatar_mode="icon";S.screen="avatar";sound("open")
+            local current=avatar_settings(p);S.avatar_icon=current.icon;S.avatar_color=current.color;S.avatar_selected=current.icon+1;S.avatar_mode="icon";S.screen="avatar";sound("open")
         elseif key=="triangle" and p then run_button({action="rename_profile"})
         elseif key=="square" and p then
             if p.playing or #S.profiles<2 then S.message="The profile that is playing stays. Choose another one first.";sound("error") else run_button({action="remove_profile"}) end
@@ -1273,11 +1550,13 @@ local function update(event)
     if U.exit_home then U.exit_home=nil;U.view=false;U.credits=false;U.busy=false;open("home",true) end
     if S.pending_about then S.pending_about=nil;run_button({action="launcher_update",enter=true});return end
     if S.clear_update_return then S.clear_update_return=nil;S.state.update_return=nil;save_state() end
+    if S.save_recovered_avatars then S.save_recovered_avatars=nil;save_state() end
+    if U.diagnostic_pending and not U.view then U.diagnostic_pending=false;U.diagnostic_saved=save_state(true) end
     S.intro=(S.intro or 0)+event.dt
     S.time=event.time;S.elapsed=S.elapsed+event.dt;S.transition=S.transition+event.dt;S.modal_time=S.modal_time+event.dt;S.poll=S.poll+event.dt
     if S.poll>=.25 then S.poll=0;refresh_models()
-        if S.screen=="about" and not U.view then
-            U.status=Q("launcher_updates")
+        if LAUNCHER_UPDATES and not U.view and (S.screen=="about" or S.time>=U.next_poll) then
+            U.next_poll=S.time+1;poll_launcher_updates()
             local phase=U.status.phase;U.busy=phase=="checking" or phase=="downloading" or phase=="validating" or phase=="ready" or phase=="installing"
         end
     end
@@ -1314,7 +1593,7 @@ local function update(event)
         S.launch_time=S.launch_time+event.dt
         if not S.launch_committed and (S.launch_time>=.95 or S.prefs.reduce_motion) then
             S.state.recent=S.state.recent or {};for i=#S.state.recent,1,-1 do if S.state.recent[i]==S.game.file then table.remove(S.state.recent,i) end end
-            table.insert(S.state.recent,1,S.game.file);while #S.state.recent>7 do table.remove(S.state.recent) end;save_state()
+            table.insert(S.state.recent,1,S.game.file);while #S.state.recent>HOME_SLOTS do table.remove(S.state.recent) end;save_state()
             local result=A("launch.commit");if result.ok then S.launch_committed=true else S.launch_time=nil;A("launch.cancel");S.status=Q("status");sound("error") end
         end
     end
@@ -1348,7 +1627,7 @@ local function draw()
 end
 local function updater_status(event)
     if event.first then U.row=1;U.credits=false;U.view=true;S.message="" end
-    U.status=event.status or {};U.busy=event.busy;U.can_update=event.can_update
+    accept_update_status(event.status);U.busy=event.busy;U.can_update=event.can_update
     S.prefs=event.preferences or S.prefs
     S.status.controllers=event.controllers or S.status.controllers
 end
@@ -1376,7 +1655,12 @@ local function updater_input(event)
     end
 end
 local function updater_draw(event)
-    S.time=event.time
+    S.time=event.time;U.view=true
+    -- Fast repeated checks can complete before the host emits a changed status callback.
+    if S.time>=(U.next_view_poll or 0) then
+        U.next_view_poll=S.time+.25;accept_update_status(Q("launcher_updates"))
+        local phase=U.status.phase;U.busy=phase=="checking" or phase=="downloading" or phase=="validating" or phase=="ready" or phase=="installing"
+    end
     box(0,0,1920,1080,C.base)
     render_about()
 end
@@ -1384,8 +1668,8 @@ end
 
 return {
     init=function(event)
-        S.state=event.state or {};S.state.avatars=S.state.avatars or {};S.state.recent=S.state.recent or {};S.state.schema=1
-        S.welcome=true;S.first_start=event.first_start;S.intro=0;refresh_models()
+        S.state=type(event.state)=="table" and event.state or {};S.state.avatars=type(S.state.avatars)=="table" and S.state.avatars or {};S.state.avatar_aliases=type(S.state.avatar_aliases)=="table" and S.state.avatar_aliases or {};S.state.recent=S.state.recent or {};S.state.schema=1
+        S.welcome=true;S.first_start=event.first_start;S.intro=0;U.check_pending=true;U.next_poll=0;refresh_models();S.save_recovered_avatars=recover_avatar_aliases()
         if S.state.update_return=="about" then S.screen="about";S.previous="about";S.pending_about=true end
         if S.state.update_return then S.state.update_return=nil;S.clear_update_return=true;S.welcome=false end
     end,

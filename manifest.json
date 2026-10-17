@@ -19,13 +19,16 @@
     "icons": "assets/stock-icons.tga",
     "ui": "assets/stock-ui.tga",
     "profiles": "assets/stock-profiles.tga",
-    "controller": "assets/controller.tga"
+    "controller": "assets/controller.tga",
+    "about": "assets/about-outline.tga",
+    "about_update": "assets/about-update.tga",
+    "home_blank": "assets/home-blank.tga"
   },
   "font": "assets/font.pefont",
   "sounds": "assets/sounds",
   "loading_scene": "loading.json",
   "host_contract": "launcher-v1.0",
-  "version": "1.003.009",
+  "version": "1.004.000",
   "updates": {
     "feed": "https://raw.githubusercontent.com/kasobos67/SwitchLauncher/update-feed/launcher-updates.json"
   }
