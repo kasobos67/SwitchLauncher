@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "switch-ui-test",
+  "releases": [
+    {
+      "version": "1.004.003",
+      "host_contract": "launcher-v1.0",
+      "api": {
+        "major": 1,
+        "min_minor": 1
+      },
+      "required_capabilities": [
+        "draw.atlas.v1",
+        "actions.launch.v1",
+        "audio.named-events.v1",
+        "loading.scene.v1",
+        "updates.launcher-packs.v1"
+      ],
+      "state_schema": 1,
+      "url": "https://github.com/kasobos67/SwitchLauncher/releases/download/test-v1.004.003/SwitchLauncher-Test-1.004.003.zip",
+      "sha256": "8a0385ebbdbd7e04375a672b1248c64fa641dd8605eae96f12a55d706b4d949d",
+      "bytes": 18396363,
+      "min_app": "1.004.000",
+      "notes": ""
+    }
+  ]
+}
