@@ -3,6 +3,27 @@
   "id": "switch-ui",
   "releases": [
     {
+      "version": "1.004.000",
+      "host_contract": "launcher-v1.0",
+      "api": {
+        "major": 1,
+        "min_minor": 1
+      },
+      "required_capabilities": [
+        "draw.atlas.v1",
+        "actions.launch.v1",
+        "audio.named-events.v1",
+        "loading.scene.v1",
+        "updates.launcher-packs.v1"
+      ],
+      "state_schema": 1,
+      "url": "https://github.com/kasobos67/SwitchLauncher/releases/download/v1.004.000/SwitchLauncher-1.004.000.zip",
+      "sha256": "bf7b620fe1ab2ddc626dd05b5d445d2ec236ac68a609d9f1e60ab5bec003370d",
+      "bytes": 18391824,
+      "min_app": "1.004.000",
+      "notes": "Added support for **ProsperoEden 1.004.000**"
+    },
+    {
       "version": "1.003.014",
       "host_contract": "launcher-v1.0",
       "api": {
