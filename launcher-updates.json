@@ -3,6 +3,27 @@
   "id": "switch-ui",
   "releases": [
     {
+      "version": "1.003.014",
+      "host_contract": "launcher-v1.0",
+      "api": {
+        "major": 1,
+        "min_minor": 1
+      },
+      "required_capabilities": [
+        "draw.atlas.v1",
+        "actions.launch.v1",
+        "audio.named-events.v1",
+        "loading.scene.v1",
+        "updates.launcher-packs.v1"
+      ],
+      "state_schema": 1,
+      "url": "https://github.com/kasobos67/SwitchLauncher/releases/download/v1.003.014/SwitchLauncher-1.003.014.zip",
+      "sha256": "43449cb50f023bd14f6ea9d55a4c4f7b90bc2788b8f616c5c1b7986c438c67cb",
+      "bytes": 18390898,
+      "min_app": "1.003.000",
+      "notes": ""
+    },
+    {
       "version": "1.003.013",
       "host_contract": "launcher-v1.0",
       "api": {
