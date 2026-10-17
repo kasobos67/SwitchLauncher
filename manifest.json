@@ -28,7 +28,7 @@
   "sounds": "assets/sounds",
   "loading_scene": "loading.json",
   "host_contract": "launcher-v1.0",
-  "version": "1.004.002",
+  "version": "1.004.003",
   "updates": {
     "feed": "https://raw.githubusercontent.com/kasobos67/SwitchLauncher/test-update-feed/launcher-updates.json"
   }

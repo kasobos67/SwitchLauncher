@@ -22,6 +22,17 @@ jobs:
       - name: Test publisher and pack builder
         run: python3 -m unittest discover -s tests -v
 
+      - name: Install Lua for interaction checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y lua5.4
+
+      - name: Check UI interactions, refresh policy and scrolling
+        run: |
+          lua5.4 tests/ui_polish.lua
+          lua5.4 tests/refresh_policy.lua
+          lua5.4 tests/scroll_motion.lua
+
       - name: Build test pack
         run: python3 tools/build_release.py --channel test
 

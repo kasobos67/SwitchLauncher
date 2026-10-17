@@ -21,7 +21,15 @@ local query_cache,rows_cache,layout_cache={},{},{}
 local empty_args={}
 local function D(kind,p)
     local result=host.draw(kind,p or empty_args)
-    if type(result)=="table" and result.error then error(result.error) end
+    if type(result)=="table" and result.error then
+        if kind=="cover" and result.error=="Game is no longer in the library" then
+            -- A native rescan can invalidate artwork between model polls. Draw a
+            -- placeholder this frame and refresh from update(), never from draw().
+            S.library_dirty=true;S.home_dirty=true
+            return D("rect",{x=p.x,y=p.y,w=p.w,h=p.h,color=p.fallback or C.row})
+        end
+        error(result.error)
+    end
     return result
 end
 local function Q(name,p)
@@ -191,7 +199,10 @@ local signal_uv={{1282/2048,136/1024,32/2048,32/1024},{1318/2048,136/1024,32/204
 local bubble_uv={{258/2048,136/1024,12/2048,40/1024},{270/2048,136/1024,-12/2048,40/1024},{2/2048,136/1024,11/2048,13/1024},{13/2048,136/1024,-11/2048,13/1024}}
 local home_shortcuts={"About","Game files","Multiplayer","Controllers","System Settings","Screen off"}
 local shortcut_inks={0xff4d4d,0xffae2e,0x4a9bdb}
-local home_hints={{"triangle","Game settings"},{"cross","Select"}}
+local home_hints={games={{"triangle","Game settings"},{"cross","Start"}},start={{"cross","Start"}},
+    open={{"cross","Open"}},profile={{"cross","User settings"}},choose={{"cross","Use user"}}}
+local empty_hints={{"circle","Back"},{"cross","Open Game files"}}
+local room_hints={offline={{"cross","Select"},{"circle","Back"}},online={{"cross","Select"},{"square","Go offline"},{"circle","Back"}}}
 local function text(value,x,y,size,ink,align,width)
     size=size or 30
     local drawn=S.prefs.large_text and size<30 and math.min(30,size*1.3) or size
@@ -251,6 +262,37 @@ local function untransform() D("untransform") end
 local function shadow_alpha(a) return (a or .4)*(S.state.white and .3 or 1) end
 local function shadow(x,y,w,h,r,soft,a,ink) local p=shadow_args;p.x=x;p.y=y;p.w=w;p.h=h;p.radius=r or 0;p.softness=soft or 7.5;p.color=ink or 0;p.alpha=shadow_alpha(a);D("shadow",p) end
 local function curve(name,frame) return motion[name] and motion[name](frame) or 1 end
+local focus_history={home={},library={}}
+local function track_focus(track,key)
+    if track.current~=key then
+        track.previous=track.current;track.current=key;track.changed=S.time
+    end
+end
+local function focus_amount(track,key,library)
+    if S.prefs.reduce_motion then return track.current==key and 1 or 0 end
+    local frame=(S.time-(track.changed or S.time))*60
+    if track.current==key then return curve(library and "library_focus_alpha" or "home_focus_alpha",frame)/255 end
+    if track.previous==key and frame<3 then return curve(library and "library_unfocus_alpha" or "home_unfocus_alpha",frame)/255 end
+    return 0
+end
+local function dialog_values(elapsed,exit)
+    if S.prefs.reduce_motion then return 1,1,1,.6 end
+    if exit then
+        -- The first twelve authored exit frames hold for a decision. Input has
+        -- already made that decision, so play the closing portion immediately.
+        local frame=12+exit.time*60
+        return exit.alpha*curve(exit.confirmed and "modal_confirm_alpha" or "modal_out_alpha",frame)/255,
+            exit.mask*curve("modal_out_mask_alpha",frame)/255,
+            exit.scale*curve(exit.confirmed and "modal_confirm_scale" or "modal_out_scale",frame),
+            exit.shadow*clamp(curve("modal_out_shadow",frame)/.3,0,1)
+    end
+    local frame=elapsed*60
+    return curve("modal_alpha",frame)/255,curve("modal_mask_alpha",frame)/255,curve("modal_scale",frame),curve("modal_shadow",frame)
+end
+local function dialog_exit(elapsed,confirmed)
+    local alpha,mask,scale,shadow=dialog_values(elapsed)
+    return {time=0,alpha=alpha,mask=mask,scale=scale,shadow=shadow,confirmed=confirmed}
+end
 local focus_border_args={color=0,alpha=0,border=7.5}
 local focus_gradient_args={radius=1.5,color=0xffffff,other=0xffffff}
 local function focus_shadow_clip(x,y,w,h,bx,by,bw,bh,radius,alpha)
@@ -418,9 +460,19 @@ local function refresh_models(live_only)
         local library=Q("library");S.scanning=library.scanning;S.library_dirty=false;S.library_safety=S.time+60
         if S.library_watch and S.time>=S.library_watch and not S.scanning then S.library_watch=nil end
         if library.generation~=S.generation then
+            local selected_file=(S.games[S.library] or empty_args).file
             S.games=library.games; S.generation=library.generation;S.game_lookup={}
             if S.sort then table.sort(S.games,function(a,b)return (S.sort=="file" and a.file or a.name)<(S.sort=="file" and b.file or b.name) end) end
             for _,g in ipairs(S.games) do if not g.remote and not S.game_lookup[g.file] then S.game_lookup[g.file]=g end end
+            S.library=clamp(S.library,1,math.max(1,#S.games))
+            if selected_file then for i,g in ipairs(S.games) do if g.file==selected_file then S.library=i;break end end end
+            local row=math.floor((S.library-1)/6)
+            local maximum=math.max(0,278+(math.ceil(#S.games/6)-1)*276+261-945)
+            S.scroll_target=clamp(S.scroll_target,0,maximum)
+            if S.screen=="library" then
+                S.scroll_target=clamp(S.scroll_target,math.max(0,278+row*276+261-945),row*276)
+            end
+            S.scroll=clamp(S.scroll,0,maximum)
         end
     end
     local order={tostring(S.generation),S.scanning and "scanning" or "ready",S.sort or "",S.home.last_file or ""}
@@ -443,16 +495,20 @@ local function refresh_models(live_only)
     S.home_count=#S.tiles+(S.home_library and 1 or 0)
     if S.zone=="games" then
         if S.home_count==0 then
-            if not S.scanning then S.zone="shortcuts";S.focus=1 end
+            if not S.scanning then S.zone="shortcuts";S.focus=2 end
         else S.focus=clamp(S.focus,1,S.home_count) end
     end
     S.strip_target=math.min(S.strip_target,math.max(0,(S.home_count-4)*405))
 end
 local function open(screen,quiet)
     if S.screen==screen then return end
-    S.previous=S.screen; S.screen=screen; S.transition=0; S.modal=nil; S.message=""; S.row=1; S.save=""; S.elapsed=0
+    S.previous=S.screen; S.screen=screen; S.transition=0;S.screen_exit=nil; S.modal=nil;S.modal_exit=nil; S.message=""; S.row=1; S.save=""; S.elapsed=0
+    if screen=="library" then
+        if not S.library_seen then S.scroll=0;S.scroll_target=0;S.library=1 end
+        S.library_seen=true;S.scroll_velocity=0;S.scroll=S.scroll_target
+    end
     if quiet then return end
-    if screen=="library" then S.scroll=0;S.scroll_target=0;S.scroll_velocity=0;S.library=1; A("library.refresh"); sound("library_open")
+    if screen=="library" then A("library.refresh"); sound("library_open")
     elseif screen=="controllers" then sound("controllers_open")
     elseif screen=="profile" then sound("profile_open")
     elseif screen=="files" then sound("open")
@@ -463,21 +519,46 @@ local function open(screen,quiet)
     else sound("open") end
 end
 local function current_game() if S.screen=="library" then return S.games[S.library] end return S.tiles[S.focus] end
+local function home_zone(zone)
+    if S.zone=="games" then S.home_game_focus=S.focus
+    elseif S.zone=="shortcuts" then S.home_shortcut_focus=S.focus end
+    if zone=="games" and (S.home_count or 0)==0 then zone="shortcuts" end
+    S.zone=zone
+    if zone=="games" then
+        S.focus=clamp(S.home_game_focus or 1,1,math.max(1,S.home_count or 0))
+        S.strip_target=math.max(0,(S.focus-4)*405)
+    elseif zone=="shortcuts" then S.focus=clamp(S.home_shortcut_focus or 1,1,6) end
+end
 local cover_args={color=0xffffff}
 local function cover(g,x,y,w,h)
     shadow(x,y+1.5,w,h,0,7.5,.4)
     if g then local p=cover_args;p.game=g.handle;p.x=x;p.y=y;p.w=w;p.h=h;p.fallback=C.row;D("cover",p) else box(x,y,w,h,C.row) end
 end
-local function marquee(value,x,y,w,size)
+local marquee_state={home={},library={}}
+local marquee_gradient={axis="horizontal"}
+local function marquee(value,x,y,w,size,context,background)
+    local state=marquee_state[context or "home"]
+    if state.value~=value then state.value=value;state.started=S.time end
     local width=measured(value,size)
     if width<=w or S.prefs.reduce_motion then text(value,x+w*.5,y,size,C.accent,"center",w);return end
-    local distance=width-w;local phase=S.elapsed%(3.4+distance/72);local offset=clamp((phase-2.4)*72,0,distance)
-    clip(x,y-size,w,size*1.7);text(value,x-offset,y,size,C.accent);unclip()
+    local distance=width-w;local end_at=2.4+distance/72+1
+    local phase=(S.time-state.started)%(end_at+.24);local offset=clamp((phase-2.4)*72,0,distance)
+    local alpha=1
+    if phase>end_at+.12 then offset=0;alpha=(phase-end_at-.12)/.12
+    elseif phase>end_at then alpha=1-(phase-end_at)/.12 end
+    clip(x,y-size,w,size*1.7);opacity(alpha);text(value,x-offset,y,size,C.accent);popopacity()
+    local p=marquee_gradient;p.y=y-size;p.w=24;p.h=size*1.7;p.color=background or C.base;p.other=p.color
+    if offset>0 then p.x=x;p.alpha=1;p.other_alpha=0;D("gradient",p) end
+    if offset<distance then p.x=x+w-24;p.alpha=0;p.other_alpha=1;D("gradient",p) end
+    unclip()
 end
 local function render_home()
+    local selected_key=S.zone=="profiles" and 200+S.profile or S.zone=="shortcuts" and 100+S.focus or S.focus
+    track_focus(focus_history.home,selected_key)
     for i,p in ipairs(S.profiles) do local x=100.5+(i-1)*90
         local selected=S.zone=="profiles" and S.profile==i
-        if selected then focus(x,62,72,72,true) end
+        local amount=focus_amount(focus_history.home,200+i)
+        if amount>0 then focus(x,62,72,72,true,amount) end
         avatar(p,x,62,72,true);ring(x+36,98,37,2,C.title,.7)
         if p.playing and not selected then box(x+16,144,40,4,C.accent,1,2) end
         if selected then text(p.name,x+36,178,28,C.accent,"center",240) end
@@ -490,7 +571,8 @@ local function render_home()
     local gs=S.prefs.reduce_motion and 1 or curve(S.first_start and "home_starter_scale" or "home_entry_scale",intro*60)
     opacity(ga);transform(gs,960,483)
     local g=S.tiles[S.focus]; local title=g and g.name or (S.home_library and "All Software" or ""); local selected_x=160.5+(S.focus-1)*405-S.strip
-    if S.zone=="games" then local w=math.min(900,math.max(450,measured(title,32)));marquee(title,clamp(selected_x+192-w*.5,112,1808-w),258,w,32) end
+    if S.zone=="games" then local w=math.min(900,math.max(450,measured(title,32)));marquee(title,clamp(selected_x+192-w*.5,112,1808-w),258,w,32,"home",C.base)
+    elseif (S.home_count or 0)==0 and not S.scanning then text("Add software in Game files.",160.5,258,30,C.copy,"left",1599) end
     clip(0,278,1920,426)
     for i=1,math.max(HOME_SLOTS,S.home_count or 0) do
         local x=160.5+(i-1)*405-S.strip;local all=S.home_library and i==#S.tiles+1;local blank=not all and not S.tiles[i]
@@ -502,11 +584,13 @@ local function render_home()
                 image("home_blank",x-12,279,408,408,home_blank_uv[S.state.white and 2 or 1])
             elseif all then
                 shadow(x+72,364.5,240,240,120,7.5,.4)
-                if S.zone=="games" and S.focus==i then focus(x+72,363,240,240,true) end
+                local amount=focus_amount(focus_history.home,i)
+                if amount>0 then focus(x+72,363,240,240,true,amount) end
                 circle(x+192,483,120,C.shortcut);grid_icon(x+192,483,108)
             else
                 cover(S.tiles[i],x,291,384,384)
-                if S.zone=="games" and S.focus==i then focus(x,291,384,384,false) end
+                local amount=focus_amount(focus_history.home,i)
+                if amount>0 then focus(x,291,384,384,false,amount) end
             end
             if S.launch_time and S.focus==i and not all then
                 box(x,291,384,384,0xffffff,curve("decide_flash",S.launch_time*60)/255)
@@ -519,7 +603,9 @@ local function render_home()
     unclip();untransform();popopacity()
     opacity(ga);transform(gs,960,816)
     for i=1,6 do local x=555+(i-1)*162;shadow(x-66,751.5,132,132,66,7.5,.35)
-        if S.zone=="shortcuts" and S.focus==i then focus(x-66,750,132,132,true);text(home_shortcuts[i],x,918,24,C.accent,"center",330) end
+        local amount=focus_amount(focus_history.home,100+i)
+        if amount>0 then focus(x-66,750,132,132,true,amount) end
+        if S.zone=="shortcuts" and S.focus==i then text(home_shortcuts[i],x,918,24,C.accent,"center",330) end
         circle(x,816,66,C.shortcut)
         symbol(i,x,816,i<=4 and 132 or 96,shortcut_inks[i] or C.title)
     end
@@ -527,7 +613,10 @@ local function render_home()
     local notice=S.message~="" and S.message or S.state_save_error
     if notice then text(notice,960,720,22,C.warn,"center",1608)
     elseif (S.home.status or "")~="" then text(S.home.status,960,720,22,C.copy,"center",1608) end
-    footer(home_hints)
+    local p=S.profiles[S.profile]
+    footer(S.zone=="profiles" and (p and p.playing and home_hints.profile or home_hints.choose)
+        or S.zone=="shortcuts" and home_hints.open
+        or g and (g.title_id~="0000000000000000" and home_hints.games or home_hints.start) or home_hints.open)
 end
 local function bubble(title,x,y,w)
     local center=x+w*.5
@@ -539,9 +628,10 @@ local function bubble(title,x,y,w)
     image("ui",x+114,y-22,16.5,19.5,bubble_uv[3],C.shortcut)
     image("ui",x+130.5,y-22,16.5,19.5,bubble_uv[4],C.shortcut)
     box(bx,y-84,w,65,C.shortcut,1,4.5)
-    marquee(title,bx+21,y-41,w-42,30)
+    marquee(title,bx+21,y-41,w-42,30,"library",C.shortcut)
 end
 local function render_library()
+    track_focus(focus_history.library,S.library)
     local entering=S.screen=="library";local animation_frame=S.transition*60
     local header=entering and curve("library_header_in",math.max(0,animation_frame-27))/255 or curve("library_header_out",animation_frame)/255
     local content=entering and curve("library_content_in",math.max(0,animation_frame-33))/255 or curve("library_content_out",animation_frame)/255
@@ -554,7 +644,9 @@ local function render_library()
     local last=math.min(#S.games,(math.floor((S.scroll+690)/276)+1)*6)
     for i=first,last do local g=S.games[i];local x=138+((i-1)%6)*276;local y=278+math.floor((i-1)/6)*276-S.scroll
         if y+261>=169 and y<=968 then cover(g,x,y,261,261)
-            if i==S.library then focus(x,y,261,261,false)
+            local amount=focus_amount(focus_history.library,i,true)
+            if amount>0 then focus(x,y,261,261,false,amount) end
+            if i==S.library then
                 if S.launch_time then box(x,y,261,261,0xffffff,curve("library_decide_flash",S.launch_time*60)/255) end
             end
             if g.remote then text("Download",x+130.5,y+235,22,C.title,"center",240) end
@@ -566,8 +658,12 @@ local function render_library()
     local total=math.ceil(#S.games/6)*276;local handle=math.max(48,767*767/math.max(1,total))
     local maximum=math.max(1,278+(math.ceil(#S.games/6)-1)*276+261-940)
     if total>767 then box(1814,190,6,750,C.line,.22,3);box(1814,190+(750-handle)*clamp(S.scroll/maximum,0,1),6,handle,C.text,.58,3) end
-    if #S.games==0 then text("No ROM files found.",960,500,32,C.copy,"center") end
-    popopacity();footer(selected and selected.remote and {{"square","Download"},{"circle","Back"},{"cross","Download and play"}} or {{"triangle","Options"},{"circle","Back"},{"cross","Start"}})
+    if #S.games==0 then
+        text(S.scanning and "Looking for software..." or "No software found.",960,420,36,C.title,"center")
+        text("Choose the folder that contains your games.",960,478,26,C.copy,"center",1400)
+        plate(480,550,960,84,true);text("Open Game files",516,601,30,C.text)
+    end
+    popopacity();footer(#S.games==0 and empty_hints or selected and selected.remote and {{"square","Download"},{"circle","Back"},{"cross","Download and play"}} or {{"triangle","Options"},{"circle","Back"},{"cross","Start"}})
 end
 
 local categories={"Profiles","Video","Performance","Audio","Accessibility","System","Themes","Downloads","Save sync"}
@@ -599,6 +695,13 @@ local function settings_rows(category,per_game)
         end
         if S.choices.frame_gen_state==0 then
             for i=#rows,1,-1 do if rows[i].field=="frame_gen" or rows[i].field=="frame_gen_target" or rows[i].field=="frame_gen_multiplier" then table.remove(rows,i) end end
+        end
+        if S.choices.frame_gen_state~=2 then
+            for _,row in ipairs(rows) do
+                if row.field=="frame_gen" or row.field=="frame_gen_target" or row.field=="frame_gen_multiplier" then
+                    row.help="Frame generation is not ready in this ProsperoEden session. Its options become available when the host reports support."
+                end
+            end
         end
     elseif category=="Performance" then
         local fields={"block_list","async_shaders","fast_gpu","unsafe_cpu","unsafe_dma","reactive_flushing","skip_invalidation","compact_memory"}
@@ -754,10 +857,15 @@ local function change_row(row,step,per_game)
     return true
 end
 local function show_modal(kind,data,event)
-    S.modal=kind;S.modal_data=data or {};S.modal_row=1;S.modal_time=0;S.message=""
+    S.modal=kind;S.modal_exit=nil;S.modal_data=data or {};S.modal_row=1;S.modal_time=0;S.message=""
     if event~=false then sound(event or ((kind=="game_options" or kind=="mods") and "open" or "modal_open")) end
 end
-local function close_modal(event) S.modal=nil;S.modal_time=0;if event~=false then sound(event or "modal_close") end end
+local function close_modal(event,confirmed)
+    if not S.modal or S.modal_exit then return end
+    if S.prefs.reduce_motion or S.modal=="game" or S.modal=="game_options" or S.modal=="overlay" or S.modal=="menu_bindings" then S.modal=nil;S.modal_time=0
+    else S.modal_exit=dialog_exit(S.modal_time,confirmed or event=="select" or event=="saved") end
+    if event~=false then sound(event or "modal_close") end
+end
 local function row_choice(row,per_game)
     if row.field=="frame_gen" or row.field=="frame_gen_target" or row.field=="frame_gen_multiplier" then
         if S.choices.frame_gen_state~=2 then S.message="Frame generation is unavailable.";sound("error");return end
@@ -897,6 +1005,7 @@ local function render_about()
         elseif phase=="installing" or phase=="ready" or phase=="validating" then detail="Keep the app open until the update finishes."
         elseif phase=="unconfigured" then detail="This launcher does not provide an update source." end
     end
+    if not U.can_update and not U.busy and not failure then detail="Finish the current operation before updating." end
     text_block(detail,left,496,24,failure and C.warn or C.copy,w-inset*2,32,3)
     if failure then text("Error: "..failure.code..". "..(U.diagnostic_saved and "Details saved in launcher state." or U.diagnostic_pending and "Return to HOME to save diagnostic details." or "Diagnostic details could not be saved."),left,590,20,C.meta,"left",w-inset*2) end
     if U.busy then
@@ -913,14 +1022,17 @@ local function render_about()
     if U.credits then render_credits() end
 end
 render_credits=function()
-    box(0,0,1920,1080,0,.68)
     local elapsed=math.max(0,S.time-(U.credits_started or S.time))
-    local alpha=S.prefs.reduce_motion and 1 or curve("screen_in",elapsed*60)/255
-    local scale=S.prefs.reduce_motion and 1 or curve("modal_scale",elapsed*60)
+    if U.credits_exit then
+        U.credits_exit.time=S.time-U.credits_exit.started
+        if S.prefs.reduce_motion or U.credits_exit.time>=.2 then U.credits=false;U.credits_exit=nil;return end
+    end
+    local alpha,mask,scale,surface_shadow=dialog_values(elapsed,U.credits_exit)
+    box(0,0,1920,1080,0,.68*mask)
     opacity(alpha);transform(scale,960,540)
     local x,y,w,h=480,160,960,760
     local left,right=x+48,x+w-48
-    shadow(x,y+1.5,w,h,0,6,.6);box(x,y,w,h,C.base)
+    shadow(x,y+1.5,w,h,0,6,surface_shadow);box(x,y,w,h,C.base)
     text("Credits",left,248,40,C.title,"left",w-96)
     line(left,282,right,282,C.line)
     local credits={
@@ -1090,10 +1202,10 @@ local function render_app_update()
 end
 local modal_titles={menu_bindings="Menu buttons",game="Game settings",game_options="Game settings",overlay="Overlay options",choice="Choose an option",sort="Sort Software",theme="Basic Theme",launchers="Choose a Launcher",mods="Mods",saves="Save Data",confirm="Are you sure?",queue="Downloads",download_source="Download from",download="Download and play",pair_servers="Choose a Server",sync_profile="Save Sync",sync_launch="Save Sync",sync_after="Save Sync",update="ProsperoEden Update",release_notes="What's New",system_info="System Information",pairing="Pairing"}
 local function modal_panel(x,y,w,h,title)
-    shadow(x,y+1.5,w,h,0,6,.6);box(x,y,w,h,C.base);text(title,x+42,y+86,48,C.title,"left",w-84)
+    shadow(x,y+1.5,w,h,0,6,S.modal_surface_shadow or .6);box(x,y,w,h,C.base);text(title,x+42,y+86,48,C.title,"left",w-84)
 end
 local function render_sources()
-    box(0,0,1920,1080,0,.68);modal_panel(550,180,820,720,"Downloads")
+    modal_panel(550,180,820,720,"Downloads")
     local model=Q("sources");local downloads=Q("downloads");local rows={}
     for _,source in ipairs(model.list or {}) do rows[#rows+1]={label=source.name,detail=source.error~="" and source.error or source.address,value=source.online and (source.games.." games") or "Not connected yet",action="refresh_sources"} end
     for _,d in ipairs(downloads) do rows[#rows+1]={label=d.name,detail=d.error or d.source,value=d.total>0 and (math.floor(d.done/d.total*100).."%") or "Queued",action="cancel_download",key=d.key} end
@@ -1109,7 +1221,7 @@ local function render_sources()
     hints({{"cross","Read the lists again"},{"circle","Back"}},1328,848,24)
 end
 local function render_sync_setup()
-    box(0,0,1920,1080,0,.68);modal_panel(430,180,1060,720,"Save Sync")
+    modal_panel(430,180,1060,720,"Save Sync")
     text_block("Each profile's save data on a server of its own, synced before and after a game.",472,310,24,C.copy,976,36,2)
     local rows=settings_rows("Save sync");S.sync_rows=rows;rows_draw(rows,472,382,976,S.row,4)
     if S.message~="" then text_block(S.message,508,820,22,C.warn,904,30,2) end
@@ -1122,7 +1234,7 @@ local function render_room()
     local public=page=="public" and Q("public_rooms") or nil
     if notice=="" and public then notice=public.error or "" end
     local connected=room.phase==2
-    shadow(500,151.5,920,780,0,6,.6);box(500,150,920,780,C.base)
+    shadow(500,151.5,920,780,0,6,S.modal_surface_shadow or .6);box(500,150,920,780,C.base)
     text(connected and "Multiplayer" or page=="choice" and "Multiplayer" or page=="public" and "Public rooms" or "Private room",left,238,40,C.title,"left",width)
     text(({"Offline","Connecting...","Connected","Leaving...","Connection failed"})[(room.phase or 0)+1],left,284,24,connected and C.accent or C.copy,"left",width)
     if public and not connected then text(public.refreshing and "Refreshing..." or (#public.rooms.." public rooms"),right,284,24,C.copy,"right",width*.5) end
@@ -1144,12 +1256,12 @@ local function render_room()
             text(i==1 and "Browse the public directory and choose a room." or "Connect using an address, port and password.",left+36,y+81,24,C.copy,"left",width-72)
         end
         text_block("Join a room before launching a game, then choose Local Wireless in the game.",left+36,664,24,C.copy,width-72,36,2)
-        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},right,878,24)
+        hints((room.phase==1 or room.phase==3) and room_hints.online or room_hints.offline,right,878,24)
     elseif page=="private" then
         local form=S.room_form;local values={form.host,tostring(form.port or 24872),form.nickname,(form.password or "")~="" and "••••••" or "",""}
         for i,row in ipairs(rows) do row.value=values[i] end
         rows_draw(rows,left,338,width,S.modal_row,5,false,84)
-        hints({{"cross","Select"},{"square","Go offline"},{"circle","Back"}},right,878,24)
+        hints((room.phase==1 or room.phase==3) and room_hints.online or room_hints.offline,right,878,24)
     else
         -- Keep the nickname separate from the scrolling, two-line room entries.
         plate(left,338,width,72,S.modal_row==1)
@@ -1177,7 +1289,7 @@ local function render_room()
     line(left,826,right,826,C.line)
 end
 
-local function render_modal()
+local function render_modal_content()
     if S.modal=="game" then
         box(0,0,1920,1080,C.base);frame("Options");cover(S.game,156,228,312,312)
         text_block(S.game.name,156,596.5,30,C.text,360,42,3);text((S.game.format or "").." · "..(S.game.size or ""),156,750,24,C.meta)
@@ -1209,7 +1321,7 @@ local function render_modal()
         footer({{"circle","Back"},{"cross","OK"}});return
     end
     if S.modal=="choice" then
-        box(0,0,1920,1080,0,.68);shadow(390,136.5,1140,810,0,6,.6);box(390,135,1140,810,C.base)
+        shadow(390,136.5,1140,810,0,6,S.modal_surface_shadow or .6);box(390,135,1140,810,C.base)
         local data=S.modal_data;local title=data.menu_action and "Choose a menu button" or data.setting and data.setting.label or data.mapping and game_buttons[data.mapping] or data.vibration and "Vibration strength" or "Choose an option"
         text(title,450,212,36,C.title);local rows=modal_rows();S.rows=rows;local top=math.max(0,S.modal_row-6)
         clip(420,255,1080,550)
@@ -1221,7 +1333,7 @@ local function render_modal()
         hints({{"circle","Back"},{"cross","OK"}},1470,897,30);return
     end
     if S.modal=="mods" then
-        box(0,0,1920,1080,0,.68);modal_panel(340,180,1240,720,"Mods");text(S.game.name,382,314,20,C.meta,"left",1156)
+        modal_panel(340,180,1240,720,"Mods");text(S.game.name,382,314,20,C.meta,"left",1156)
         local rows=modal_rows();S.rows=rows;local top=math.max(0,S.modal_row-5);clip(358,328,1204,492)
         for i=top+1,math.min(#rows,top+5) do local row=rows[i];local y=334+(i-top-1)*96;plate(382,y,1156,94,i==S.modal_row)
             if row.action=="cheat_toggle" then text(row.label,458,y+55.4,24,row.live and C.text or C.meta,"left",520)
@@ -1233,9 +1345,6 @@ local function render_modal()
         if S.message~="" then text_block(S.message,418,842,20,C.copy,1084,26,2) end
         hints(#rows==0 and {{"square","Create the folder"},{"circle","Back"}} or {{"updown","Select"},{"cross","Turn on or off"},{"circle","Back"}},1538,848,30);return
     end
-    box(0,0,1920,1080,0,.68)
-    local alpha=S.prefs.reduce_motion and 1 or curve("screen_in",S.modal_time*60)/255
-    opacity(alpha);local scale=S.prefs.reduce_motion and 1 or curve("modal_scale",S.modal_time*60);transform(scale,960,540)
     if S.modal=="room" then render_room()
     else
         local title=modal_titles[S.modal] or "Settings";if S.modal=="game_options" then title=S.modal_data.category end
@@ -1248,14 +1357,27 @@ local function render_modal()
             local i=0;for part in tostring(value):gmatch("[^\n]+") do if i<12 then text(part,382,350+i*38,26,C.copy,"left",1156);i=i+1 end end
         else
             local rows=modal_rows();S.rows=rows;rows_draw(rows,382,334,1156,S.modal_row,5,S.modal=="game_options")
-            if #rows==0 then text("Nothing to show yet.",960,510,30,C.meta,"center") end
+            if #rows==0 then
+                local detail=S.modal=="queue" and "No downloads are queued. Add a game from a download source in All Software."
+                    or S.modal=="pair_servers" and "No save servers are configured. Check your save-sync server configuration."
+                    or S.modal=="download_source" and "No download sources are available for this game. Refresh the sources and try again."
+                    or "No options are available here. Press Back to return."
+                text_block(detail,382,402,28,C.copy,1156,40,3)
+            end
             if S.modal=="sync_launch" then local u=(S.status.launch or {}).sync or {};text(u.error or "Synchronizing save data...",382,802,24,C.copy,"left",1156) end
             if S.modal=="download" then local d=S.download_status or {};text(d.error or (d.total and d.total>0 and (math.floor(d.done/d.total*100).."% downloaded") or "Waiting for the download..."),382,802,24,C.copy,"left",1156) end
         end
         hints({{"updown","Select"},{"circle","Back"},{"cross","OK"}},1538,848,24)
         if S.message~="" and S.modal~="update" then text(S.message,382,806,24,C.warn,"left",1156) end
     end
-    untransform();popopacity()
+end
+local function render_modal()
+    if S.modal=="game" or S.modal=="game_options" or S.modal=="overlay" or S.modal=="menu_bindings" then render_modal_content();return end
+    local alpha,mask,scale,surface_shadow=dialog_values(S.modal_time,S.modal_exit)
+    box(0,0,1920,1080,0,.68*mask)
+    opacity(alpha);transform(scale,960,540);S.modal_surface_shadow=surface_shadow
+    render_modal_content()
+    S.modal_surface_shadow=nil;untransform();popopacity()
 end
 local function request_game_settings()
     local g=current_game();if not g then return end
@@ -1386,13 +1508,13 @@ local function run_button(row,per_game)
             elseif data.setting.kind=="toggle" and not data.per_game then value=value==1 end
             if not set_preference(data.setting,value,data.per_game) then sound("error");return end
         end
-        if data.return_category then show_modal("game_options",{category=data.return_category},false);S.modal_row=data.return_row;sound("modal_close") else close_modal() end
+        if data.return_category then show_modal("game_options",{category=data.return_category},false);S.modal_row=data.return_row;sound("modal_close") else close_modal(nil,true) end
         sound("saved")
     elseif action=="confirm" then local data=S.modal_data
         if data.action=="delete_game" then A("game.delete",{game=S.game.handle,confirmed=true})
         elseif data.action=="save_import" then local r=A("save.import",{game=S.game.handle});S.message=r.message or S.message
         elseif data.action=="remove_profile" then A("profile.remove",{index=S.profile-1});refresh_models();S.profile=clamp(S.profile,1,#S.profiles)
-        elseif data.action=="cancel_download" then A("download.cancel",{key=data.key}) end;close_modal()
+        elseif data.action=="cancel_download" then A("download.cancel",{key=data.key}) end;close_modal(nil,true)
     elseif action=="cancel" then close_modal()
     end
 end
@@ -1414,6 +1536,7 @@ local function input(event)
     end
     if S.screen=="off" then S.screen="home";S.transition=0;sound("resume");return end
     if S.launch_time then return end
+    if S.modal_exit or S.screen_exit then return end
     if S.modal then
         local rows=active_rows()
         if key=="circle" then
@@ -1428,7 +1551,10 @@ local function input(event)
             elseif S.modal=="download" then if S.download then A("download.cancel",{key=S.download.key}) end;S.download=nil;close_modal()
             elseif S.modal=="pairing" then A("pair.cancel");close_modal()
             else close_modal() end;return
-        elseif key=="square" and S.modal=="room" then A("room.leave");return
+        elseif key=="square" and S.modal=="room" then
+            local phase=(S.status.room or {}).phase or 0
+            if phase==1 or phase==2 or phase==3 then A("room.leave") end
+            return
         elseif key=="square" and S.modal=="mods" and #rows==0 then A("mods.folder",{game=S.game.handle});return
         elseif key=="triangle" and S.modal=="room" then A("room.refresh");return
         elseif key=="up" or key=="down" then local before=S.modal_row;S.modal_row=clamp(S.modal_row+(key=="down" and 1 or -1),1,math.max(1,#rows));if S.modal_row~=before then sound((S.modal=="game" or S.modal=="game_options" or S.modal=="mods") and S.screen=="home" and "focus" or "focus_menu") end;return
@@ -1453,14 +1579,16 @@ local function input(event)
         if key=="triangle" then if S.zone=="games" then request_game_settings() else sound("error") end;return end
         if S.zone=="profiles" then
             if key=="left" or key=="right" then S.profile=clamp(S.profile+(key=="right" and 1 or -1),1,math.max(1,#S.profiles));sound("focus_account")
-            elseif key=="down" or key=="circle" then S.zone="games";S.focus=1;sound("focus_navigation")
+            elseif key=="down" or key=="circle" then home_zone("games");sound("focus_navigation")
             elseif key=="cross" then local p=S.profiles[S.profile];if p then
                 if p.playing then S.profile_return="home";open("profile");S.row=1
                 else local r=A("profile.choose",{handle=p.handle});if r.ok then refresh_models();sound("account_select") end end
             end end;return
         end
-        if key=="up" then if S.zone=="shortcuts" then S.zone="games";S.focus=1;sound("focus") elseif #S.profiles>0 then S.zone="profiles";S.profile=1;sound("focus") end
-        elseif key=="down" then if S.zone~="shortcuts" then S.zone="shortcuts";S.focus=1;sound("focus") end
+        if key=="up" then
+            if S.zone=="shortcuts" and (S.home_count or 0)>0 then home_zone("games");sound("focus")
+            elseif #S.profiles>0 then home_zone("profiles");sound("focus") end
+        elseif key=="down" then if S.zone~="shortcuts" then home_zone("shortcuts");sound("focus") end
         elseif key=="left" or key=="right" then
             local before=S.focus;S.focus=clamp(S.focus+(key=="right" and 1 or -1),1,S.zone=="shortcuts" and 6 or math.max(1,S.home_count or 0))
             if S.focus~=before then sound("focus");if S.zone=="games" then sound("home_scroll") end else sound("scroll_limit") end
@@ -1470,7 +1598,7 @@ local function input(event)
                 elseif S.tiles[S.focus] then request_launch() else sound("error") end
             else local screens={"about","files","room","controllers","settings","off"};local target=screens[S.focus]
                 if target=="room" then S.room_form=Q("room_form");show_modal("room",{page="choice"});sound("album_open")
-                else open(target);if target=="files" then S.files=Q("game_files")
+                else open(target);if target=="files" then S.files_return=nil;S.files=Q("game_files")
                     elseif target=="about" then run_button({action="launcher_update",enter=true}) end end
             end
         end
@@ -1480,7 +1608,9 @@ local function input(event)
         if key=="circle" then open("home");return
         elseif key=="options" then show_modal("sort");return
         elseif key=="triangle" then request_game_settings();return
-        elseif key=="cross" then request_launch();return
+        elseif key=="cross" then
+            if #S.games==0 then S.files_return="library";open("files");S.files=Q("game_files")
+            else request_launch() end;return
         elseif key=="square" then local g=current_game();if g then if g.remote then A("download.start",{game=g.handle,source=0,first=false})
             elseif g.title_id=="0000000000000000" or g.mods==0 then sound("error")
             else local m=Q("mods",{game=g.handle});local r=A("mods.enabled",{game=g.handle,value=not m.enabled});sound(r.ok and "toggle" or "error") end end;return end
@@ -1528,22 +1658,29 @@ local function input(event)
             else sound("focus") end
         end;return
     elseif S.screen=="sources" or S.screen=="sync_setup" then
-        if key=="circle" then S.screen="settings";S.transition=0;sound("modal_close")
+        if key=="circle" then
+            if S.prefs.reduce_motion then S.screen="settings";S.transition=0
+            else S.screen_exit=dialog_exit(S.transition) end
+            sound("modal_close")
         elseif key=="up" or key=="down" then local rows=S.screen=="sources" and S.source_rows or S.sync_rows;S.row=clamp(S.row+(key=="down" and 1 or -1),1,math.max(1,#(rows or {})));sound("focus")
         elseif key=="cross" then local rows=S.screen=="sources" and S.source_rows or S.sync_rows;local row=(rows or {})[S.row];if row then run_button(row) elseif S.screen=="sources" then A("sources.refresh") end end;return
     elseif S.screen=="about" then
         if U.credits then
-            if key=="circle" or key=="square" then U.credits=false;sound("back") end
+            if (key=="circle" or key=="square") and not U.credits_exit then
+                if S.prefs.reduce_motion then U.credits=false
+                else U.credits_exit=dialog_exit(S.time-(U.credits_started or S.time));U.credits_exit.started=S.time end
+                sound("back")
+            end
             return
         end
         if key=="circle" then open("home")
         elseif key=="up" or key=="down" then
             local row=key=="down" and 2 or 1;if row~=U.row then U.row=row;sound("focus_menu") end
         elseif key=="cross" or key=="triangle" then run_button({action="launcher_update"})
-        elseif key=="square" then U.credits=true;U.credits_started=S.time;sound("modal_open") end;return
+        elseif key=="square" then U.credits=true;U.credits_exit=nil;U.credits_started=S.time;sound("modal_open") end;return
     elseif S.screen=="controllers" and key=="options" then show_modal("menu_bindings");return
     elseif S.screen=="files" then
-        if key=="circle" then open("home")
+        if key=="circle" then local target=S.files_return or "home";S.files_return=nil;open(target)
         elseif key=="triangle" then run_button({action="files_select"})
         elseif key=="square" then local path=(S.files or {}).default or "/data/prosperoeden";local r=A("game_files.set",{path=path});S.files=Q("game_files",{path=path});S.row=1;S.message=r.ok and "Default folder saved. Reopen Switch to use it." or S.message;sound(r.ok and "saved" or "error")
         elseif key=="l1" or key=="r1" then S.row=clamp(S.row+(key=="r1" and 6 or -6),1,math.max(1,#active_rows()));sound("page")
@@ -1601,6 +1738,14 @@ local function update(event)
     if U.diagnostic_pending and not U.view then U.diagnostic_pending=false;U.diagnostic_saved=save_state(true) end
     S.intro=(S.intro or 0)+event.dt
     S.time=event.time;S.elapsed=S.elapsed+event.dt;S.transition=S.transition+event.dt;S.modal_time=S.modal_time+event.dt;S.poll=S.poll+event.dt
+    if S.modal_exit then
+        S.modal_exit.time=S.modal_exit.time+event.dt
+        if S.prefs.reduce_motion or S.modal_exit.time>=.2 then S.modal=nil;S.modal_exit=nil;S.modal_time=0 end
+    end
+    if S.screen_exit then
+        S.screen_exit.time=S.screen_exit.time+event.dt
+        if S.prefs.reduce_motion or S.screen_exit.time>=.2 then S.screen="settings";S.transition=0;S.screen_exit=nil end
+    end
     if S.poll>=.25 then S.poll=0;refresh_models(true)
         if LAUNCHER_UPDATES and not U.view and (S.screen=="about" or S.time>=U.next_poll) then
             U.next_poll=S.time+1;poll_launcher_updates()
@@ -1665,6 +1810,11 @@ local function draw()
         opacity(1-cubic(S.transition/.45));render_home();popopacity()
     elseif S.previous=="library" and S.screen=="home" and S.transition<.2 and not S.prefs.reduce_motion then
         opacity(1-cubic(S.transition/.2));render_library();popopacity()
+    elseif S.screen=="sources" or S.screen=="sync_setup" then
+        local alpha,mask,scale,surface_shadow=dialog_values(S.transition,S.screen_exit)
+        box(0,0,1920,1080,0,.68*mask)
+        opacity(alpha);transform(scale,960,540);S.modal_surface_shadow=surface_shadow
+        renderers[S.screen]();S.modal_surface_shadow=nil;untransform();popopacity()
     else
         local alpha=S.screen=="library" and 1 or curve("screen_in",S.transition*60)/255
         if S.prefs.reduce_motion or S.transition>1 then alpha=1 end
@@ -1674,7 +1824,7 @@ local function draw()
     if S.launch_time then box(0,0,1920,1080,0,cubic((S.launch_time/.95-.12)/.5)) end
 end
 local function updater_status(event)
-    if event.first then U.row=1;U.credits=false;U.view=true;S.message="" end
+    if event.first then U.row=1;U.credits=false;U.credits_exit=nil;U.view=true;S.message="" end
     accept_update_status(event.status);U.busy=event.busy;U.can_update=event.can_update
     S.prefs=event.preferences or S.prefs
     S.status.controllers=event.controllers or S.status.controllers
@@ -1685,11 +1835,15 @@ local function updater_input(event)
         if face_buttons[physical+1]==key then key=face_buttons[action];break end
     end
     if U.credits then
-        if key=="circle" or key=="square" then U.credits=false;sound("back") end
+        if (key=="circle" or key=="square") and not U.credits_exit then
+            if S.prefs.reduce_motion then U.credits=false
+            else U.credits_exit=dialog_exit(S.time-(U.credits_started or S.time));U.credits_exit.started=S.time end
+            sound("back")
+        end
         return
     end
     if key=="circle" then local result=A("launcher_updates.close");if result.ok then sound("back") else sound("error") end;return end
-    if key=="square" then U.credits=true;U.credits_started=S.time;sound("modal_open");return end
+    if key=="square" then U.credits=true;U.credits_exit=nil;U.credits_started=S.time;sound("modal_open");return end
     if key=="up" or key=="down" or key=="left" or key=="right" then
         local row=(key=="down" or key=="right") and 2 or 1
         if row~=U.row then U.row=row;sound("focus_menu") end

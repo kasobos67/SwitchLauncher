@@ -33,6 +33,10 @@ Screenshots supplied by the project author. Games shown are not included.
 
 The interface is English-only and uses a fixed layout. New ProsperoEden features may require an updated launcher before controls for them appear here.
 
+### Test 1.004.003
+
+This test release adds the original focus/unfocus handoff, coordinated dialog/backdrop entry and exit, remembered HOME rows and library positions, contextual HOME button hints, long-title edge fades and clearer empty/unavailable states. The two existing sorting choices are unchanged. It retains the 1.004.002 performance work and uses the same test feed and ProsperoEden 1.004.000 API.
+
 ## Installation
 
 Install or update to the official **ProsperoEden 1.004.000** app before adding this pack.
@@ -187,6 +191,7 @@ Contributors with Lua 5.4 can also run the refresh-policy regression checks:
 ```sh
 lua tests/refresh_policy.lua
 lua tests/scroll_motion.lua
+lua tests/ui_polish.lua
 ```
 
 These check that navigation avoids repeated HOME metadata reads while profiles, settings, live status and update notifications still refresh correctly. Scrolling is compared against reference samples generated from the SwitchPS5 1.002.001 spring. Lua is only needed for these extra development checks, not for building or installing a release.
