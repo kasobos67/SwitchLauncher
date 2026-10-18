@@ -3,6 +3,27 @@
   "id": "switch-ui",
   "releases": [
     {
+      "version": "1.005.000",
+      "host_contract": "launcher-v1.0",
+      "api": {
+        "major": 1,
+        "min_minor": 1
+      },
+      "required_capabilities": [
+        "draw.atlas.v1",
+        "actions.launch.v1",
+        "audio.named-events.v1",
+        "loading.scene.v1",
+        "updates.launcher-packs.v1"
+      ],
+      "state_schema": 1,
+      "url": "https://github.com/kasobos67/SwitchLauncher/releases/download/v1.005.000/SwitchLauncher-1.005.000.zip",
+      "sha256": "48f3be72f7c9a98b423645da968cf778b5ff892dd9e11eadb32ff080706bf6b7",
+      "bytes": 18397558,
+      "min_app": "1.004.000",
+      "notes": "- **Added support for ProsperoEden 1.005.000**\r\n- **Changing frame gen method is not possible from the lua theme**, there will be instructions on how to do it from the built in launcher"
+    },
+    {
       "version": "1.004.003",
       "host_contract": "launcher-v1.0",
       "api": {
