@@ -6,7 +6,23 @@ SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an i
 
 ## Compatibility
 
-Minimum required ProsperoEden version: **1.004.000**.
+> [!IMPORTANT]
+> **The minimum ProsperoEden version required for Switch UI is 1.004.000** past versions of Switch UI 1.003 were built for and tested on a modified ProsperEden 1.003 build.
+
+Switch UI versions follow the format **`X.XXX.YYY`**:
+
+- **`X.XXX`** identifies the minimum required ProsperoEden release.
+- **`YYY`** identifies Switch UI revisions and does not need to match ProsperoEden’s final three digits.
+
+Check your installed ProsperoEden version in **About**. Its **`X.XXX`** is recommended to be **the same as or higher than** the Switch UI version you want to install.
+
+| ProsperoEden | Switch UI | Compatible? |
+| --- | --- | --- |
+| `1.005.000` | `1.005.003` | Yes — matching `1.005` |
+| `1.006.000` | `1.005.003` | Yes — ProsperoEden is newer |
+| `1.004.013` | `1.005.000` | No — make sure to update ProsperoEden first |
+
+For example, every **Switch UI `1.005.YYY`** release requires **ProsperoEden `1.005.000` or newer**, regardless of the Switch UI revision number.
 
 ## Interface
 
@@ -32,8 +48,6 @@ Screenshots supplied by the project author. Games shown are not included.
 The interface is English-only and uses a fixed layout. New ProsperoEden features may require an updated launcher before controls for them appear here.
 
 ## Installation
-
-Install or update to the official **ProsperoEden 1.004.000** app before adding this pack.
 
 1. Download the attached **`SwitchLauncher-<version>.zip`** from this repository's [Releases](https://github.com/kasobos67/SwitchLauncher/releases). Use the named launcher ZIP, rather than GitHub's automatically generated source-code archive.
 2. Close ProsperoEden completely.
