@@ -10,7 +10,7 @@ SwitchLauncher brings the custom **Switch UI** interface to ProsperoEden as an i
 ## Compatibility
 
 > [!IMPORTANT]
-> **The minimum ProsperoEden version required for Switch UI is 1.004.000** past versions of Switch UI 1.003 were built for and tested on a modified ProsperEden 1.003 build.
+> **The minimum ProsperoEden version required for Switch UI is 1.004.000**, past versions of Switch UI 1.003 were built for and tested on a modified ProsperEden 1.003 build.
 
 Switch UI versions follow the format **`X.XXX.YYY`**:
 
