@@ -1,7 +1,7 @@
 <p align="center">
   <img src="docs/images/icon-source.png" alt="SwitchPS5 icon" width="160" height="160">
 </p>
-<h1 align="center">SwitchPS5</h1>
+<h1 align="center">SwitchLauncher</h1>
 
 A Nintendo Switch-inspired launcher for [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden) on PS5, maintained by [kasobos67](https://github.com/kasobos67).
 
