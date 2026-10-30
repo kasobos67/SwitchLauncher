@@ -1,3 +1,25 @@
+<details>
+<summary><strong>SwitchPS5 or SwitchLauncher?</strong></summary>
+
+<br>
+
+**SwitchPS5** is a complete emulator app with the Switch-style menus already built in.
+
+**SwitchLauncher** adds those menus to the regular ProsperoEden app. It is the continuation of SwitchPS5.
+
+| Question | [SwitchPS5](https://github.com/kasobos67/SwitchPS5) | [SwitchLauncher](https://github.com/kasobos67/SwitchLauncher) |
+|---|---|---|
+| **What do I install?** | The complete SwitchPS5 app. Everything needed for its interface is included. | ProsperoEden first, then the SwitchLauncher pack. |
+| **Do I need both projects?** | No. SwitchPS5 works on its own. | You need ProsperoEden, but you do not need SwitchPS5. |
+| **What do I open on my PS5?** | The **Switch** app. | **ProsperoEden**, with SwitchLauncher selected as its launcher. |
+| **Which emulator version does it use?** | The bundled **ProsperoEden 1.005.000**. | Your installed ProsperoEden version. Choose a compatible SwitchLauncher release. |
+| **How do I update the menus?** | Updates require replacing the app files manually. **1.005.000 is the final release.** | Download and install SwitchLauncher updates directly from its **About** menu. |
+| **Can I use newer ProsperoEden versions?** | Updating regular ProsperoEden does not update the emulator inside SwitchPS5. No further SwitchPS5 updates are planned. | Yes, with a compatible SwitchLauncher release. ProsperoEden and SwitchLauncher are updated separately. |
+| **Which one should I choose?** | Choose this if you want the final standalone app and are happy to stay on its bundled emulator version. | **Recommended for new users:** choose this for future menu improvements and support for newer ProsperoEden versions. |
+
+SwitchLauncher changes the interface. Game compatibility and in-game performance depend on the ProsperoEden version and settings you use.
+
+</details>
 <p align="center">
   <img src="docs/images/icon-source.png" alt="SwitchPS5 icon" width="160" height="160">
 </p>
